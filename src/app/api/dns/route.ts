@@ -48,6 +48,8 @@ interface TcpResult {
 
 interface DomainResult extends ResolveResult {
   domain: string;
+  /** Whether this domain is decisive for actually PLAYING (auth/core game). */
+  critical: boolean;
   baselineIps: string[];
   /**
    * true  => this DNS returns IPs that neither Google nor Cloudflare return (likely custom routing)
@@ -57,6 +59,21 @@ interface DomainResult extends ResolveResult {
   differs: boolean | null;
   /** User's DNS AND all baselines failed -> domain is not publicly resolvable, excluded from verdict */
   publiclyUnresolvable: boolean;
+  /** DNS answered with an IP in a private/unroutable range (internal routing / possible hijack). */
+  privateAnswer: boolean;
+  /**
+   * The domain resolved but the game server is NOT actually reachable — either a
+   * TCP handshake failed or it points at a private/unroutable IP. This is WORSE
+   * than a plain failure because it creates a false "it's connected" impression.
+   */
+  misleading: boolean;
+  /**
+   * Best-effort reachability of the resolved server:
+   *  true  => resolved AND a TCP handshake succeeded (or no TCP test but public IP)
+   *  false => resolved but unreachable (TCP failed / private IP)
+   *  null  => did not resolve, reachability is moot
+   */
+  reachable: boolean | null;
   tcp: TcpResult[];
 }
 
@@ -74,6 +91,20 @@ function ipKey(ip: string): string {
 
 function hasPrefixOverlap(a: string[], b: string[]): boolean {
   return a.some((x) => b.some((y) => ipKey(x) === ipKey(y)));
+}
+
+/** Private / unroutable IPv4 (or any non-IPv4) — can never be reached from the tester. */
+function isPrivateIp(ip: string): boolean {
+  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return true; // not plain IPv4 — treat as non-public for reachability purposes
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return (
+    a === 0 || a === 10 || a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
 }
 
 function cleanDomain(raw: string): string | null {
@@ -158,7 +189,7 @@ function tcpTest(host: string, port: number): Promise<TcpResult> {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { dns?: string; domains?: string[]; tcpPorts?: number[] };
+  let body: { dns?: string; domains?: string[]; critical?: string[]; tcpPorts?: number[] };
   try {
     body = await req.json();
   } catch {
@@ -179,6 +210,16 @@ export async function POST(req: NextRequest) {
   if (domains.length === 0) {
     return NextResponse.json({ error: "هیچ دامنه معتبری برای تست وجود ندارد" }, { status: 400 });
   }
+
+  // Which of the probed domains are decisive for actually playing (auth + core
+  // game service). When the client sends no list we treat all as critical so
+  // behaviour degrades gracefully.
+  const criticalSet = new Set(
+    (body.critical ?? [])
+      .map((h) => cleanDomain(String(h)))
+      .filter((h): h is string => !!h),
+  );
+  const isCritical = (host: string) => (criticalSet.size === 0 ? true : criticalSet.has(host));
 
   const tcpPorts = (body.tcpPorts ?? [])
     .map((p) => Number(p))
@@ -216,8 +257,25 @@ export async function POST(req: NextRequest) {
       tcp = await Promise.all(tcpPorts.map((p) => tcpTest(r.ips[0], p)));
     }
 
+    const resolved = r.status === "ok" && r.ips.length > 0;
+    const privateAnswer = resolved && r.ips.every((ip) => isPrivateIp(ip));
+    // Reachability: prefer real TCP evidence; without TCP fall back to "public IP resolved".
+    let reachable: boolean | null;
+    if (!resolved) {
+      reachable = null;
+    } else if (privateAnswer) {
+      reachable = false; // a private/unroutable answer can never serve the game
+    } else if (tcp.length > 0) {
+      reachable = tcp.some((t) => t.ok);
+    } else {
+      reachable = true; // resolved to a public IP, no TCP probe requested
+    }
+    // Resolved but not actually reachable => the dangerous "looks connected but isn't" case.
+    const misleading = resolved && reachable === false;
+
     results.push({
       domain,
+      critical: isCritical(domain),
       status: r.status,
       latencyMs: r.latencyMs,
       ips: r.ips,
@@ -229,12 +287,25 @@ export async function POST(req: NextRequest) {
         baselineA[i].ips.length === 0 &&
         baselineB[i].ips.length === 0 &&
         baselineC[i].ips.length === 0,
+      privateAnswer,
+      misleading,
+      reachable,
       tcp,
     });
   }
 
   const judgeable = results.filter((r) => !r.publiclyUnresolvable);
-  const resolvedCount = judgeable.filter((r) => r.status === "ok").length;
+  // Verdict/ranking are driven ONLY by critical (auth + core game) domains; a
+  // blocked marketing website must not sink a working DNS, and a resolvable
+  // website must not make a broken login look healthy. If a service happens to
+  // have no critical domain in the judgeable set we fall back to all judgeable.
+  const judgeableCritical = judgeable.filter((r) => r.critical);
+  const verdictSet = judgeableCritical.length > 0 ? judgeableCritical : judgeable;
+
+  const resolvedCount = verdictSet.filter((r) => r.status === "ok").length;
+  const reachableCount = verdictSet.filter((r) => r.reachable === true).length;
+  const misleadingCount = verdictSet.filter((r) => r.misleading).length;
+
   const latencies = results
     .map((r) => r.latencyMs)
     .filter((x): x is number => typeof x === "number");
@@ -244,8 +315,12 @@ export async function POST(req: NextRequest) {
     baseline: BASELINE_DNS,
     results,
     summary: {
-      total: judgeable.length,
+      total: verdictSet.length,
       resolved: resolvedCount,
+      /** critical domains whose game server is actually reachable */
+      reachable: reachableCount,
+      /** critical domains that resolve but cannot reach the game server (false "connected") */
+      misleading: misleadingCount,
       skipped: results.length - judgeable.length,
       avgLatency: latencies.length
         ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)

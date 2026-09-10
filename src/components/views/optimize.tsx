@@ -87,9 +87,25 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
       <div className="flex flex-wrap items-center gap-2">
         {statusIcon(r.status, r.publiclyUnresolvable)}
         <span className="ltr break-all font-mono text-xs text-foreground/90">{r.domain}</span>
+        {!r.critical && (
+          <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-500 dark:text-zinc-400">
+            وب‌سایت (غیرحیاتی)
+          </span>
+        )}
         {r.publiclyUnresolvable ? (
           <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400">
             خارج از قضاوت
+          </span>
+        ) : r.misleading ? (
+          <span
+            className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-600 dark:text-rose-400"
+            title={
+              r.privateAnswer
+                ? "این دامنه به یک IP داخلیِ بی‌جواب اشاره می‌کند — resolve می‌شه ولی به سرور بازی نمی‌رسه"
+                : "resolve شد ولی هیچ پورتی جواب نداد — به سرور بازی نمی‌رسه"
+            }
+          >
+            {r.privateAnswer ? "IP داخلیِ بی‌جواب" : "به سرور نمی‌رسه"}
           </span>
         ) : r.differs === true ? (
           <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
@@ -167,8 +183,8 @@ function IpResultCard({
           {label}
         </span>
         <span className="ms-auto flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span>
-            {s.resolved}/{s.total} دامنه
+          <span title="سرورهای حیاتی (لاگین/بازی) که واقعاً قابل‌اتصال بودند">
+            {s.reachable ?? s.resolved}/{s.total} سرور حیاتی
           </span>
           {s.avgLatency !== null && (
             <span className="ltr flex items-center gap-1 font-mono">
@@ -214,7 +230,11 @@ export function Optimize() {
 
   const score = (res: ApiResult) => {
     const { tone } = verdictOf(res);
-    const toneRank = tone === "ok" ? 0 : tone === "partial" ? 1 : tone === "unknown" ? 2 : 3;
+    // Reachable-good first; "misleading" (resolves but game server unreachable)
+    // ranks WORST — even below a clean failure — so a fake "connected" DNS can
+    // never be crowned best.
+    const toneRank =
+      tone === "ok" ? 0 : tone === "partial" ? 1 : tone === "unknown" ? 2 : tone === "dead" ? 3 : 4;
     return toneRank * 10000 + (res.summary.avgLatency ?? 9999);
   };
 
@@ -396,7 +416,17 @@ export function Optimize() {
               <CheckCircle2 className="h-3.5 w-3.5" /> DNS کار میکنه
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              همه دامنه‌های بازی پاسخ سالم دادند؛ ست‌کردنش روی کنسول/PC امنه.
+              سرورهای حیاتی بازی (لاگین و سرویس) نه‌فقط resolve شدند بلکه واقعاً قابل‌اتصال بودند؛
+              ست‌کردنش روی کنسول/PC امنه.
+            </p>
+          </div>
+          <div className="bg-card/80 p-3.5">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
+              <XCircle className="h-3.5 w-3.5" /> به سرور بازی نمی‌رسه
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              دامنه resolve می‌شه ولی به یک IP داخلی/بی‌جواب می‌رسه — بازی «انگار وصله» ولی بالا
+              نمی‌آید. این از resolve‌نشدن هم بدتره چون توهم اتصال می‌سازه.
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
@@ -416,13 +446,15 @@ export function Optimize() {
               هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
             </p>
           </div>
-          <div className="bg-card/80 p-3.5">
+          <div className="bg-card/80 p-3.5 sm:col-span-2">
             <p className="flex items-center gap-1.5 text-xs font-bold">
               <Info className="h-3.5 w-3.5 text-muted-foreground" /> نکته
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              تست از سیستم خودت اجرا میشه؛ پس DNSهای داخلی ایران هم واقعاً سنجیده میشن — فقط
-              مطمئن شو فایروال پورت ۵۳ (UDP) را نبسته باشد.
+              قضاوت و رتبه‌بندی فقط بر پایه‌ی دامنه‌های حیاتی (لاگین/سرویس بازی) و قابل‌اتصال‌بودن واقعی
+              (نه فقط resolve) محاسبه می‌شه؛ وب‌سایت تبلیغاتی بازی در رتبه اثری نداره. عدد پینگ هم «تأخیر
+              رسیدن به سرور بازی روی TCP/443» است، نه پینگ داخل گیم (UDP). فقط مطمئن شو فایروال پورت ۵۳
+              (UDP) را نبسته باشد.
             </p>
           </div>
         </div>

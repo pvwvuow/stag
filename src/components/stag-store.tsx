@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { GAME_PRESETS, getPreset } from "@/lib/games";
+import { GAME_PRESETS, getPreset, domainHosts, criticalHosts, primaryProbeHost } from "@/lib/games";
 import { DNS_CATALOG, type DnsGroup, type Reachability } from "@/lib/dns-catalog";
 import { useToast } from "@/hooks/use-toast";
 
@@ -25,6 +25,8 @@ export interface TcpResult {
 
 export interface DomainResult {
   domain: string;
+  /** Decisive for actually playing (auth + core game service). */
+  critical: boolean;
   status: string;
   latencyMs: number | null;
   ips: string[];
@@ -32,6 +34,12 @@ export interface DomainResult {
   baselineIps: string[];
   differs: boolean | null;
   publiclyUnresolvable: boolean;
+  /** DNS answered with a private/unroutable IP. */
+  privateAnswer: boolean;
+  /** Resolved but the game server is unreachable — a false "connected". */
+  misleading: boolean;
+  /** true reachable, false resolved-but-unreachable, null didn't resolve. */
+  reachable: boolean | null;
   tcp: TcpResult[];
 }
 
@@ -40,8 +48,13 @@ export interface ApiResult {
   baseline: string;
   results: DomainResult[];
   summary: {
+    /** count of CRITICAL domains judged */
     total: number;
     resolved: number;
+    /** critical domains whose game server is actually reachable */
+    reachable: number;
+    /** critical domains that resolve but can't reach the game server */
+    misleading: number;
     skipped: number;
     avgLatency: number | null;
     routingActive: boolean;
@@ -424,7 +437,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const game = getPreset(state.gameId);
-    const domain = game?.domains[0]; // game-realistic probe target
+    // Probe the REAL game/auth server (critical domain), never the marketing
+    // website — so the latency reflects the path that matters for playing.
+    const domain = game ? primaryProbeHost(game) : undefined;
     setSweeping(true);
     setSweepResults({});
 
@@ -551,7 +566,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dns: ip,
-          domains: game.domains,
+          domains: domainHosts(game),
+          critical: criticalHosts(game),
           tcpPorts: state.tcpEnabled ? game.tcpPorts : [],
         }),
       })
@@ -573,7 +589,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
                 dns: ip,
                 baseline: "8.8.8.8",
                 results: [],
-                summary: { total: 0, resolved: 0, skipped: 0, avgLatency: null, routingActive: false },
+                summary: {
+                  total: 0,
+                  resolved: 0,
+                  reachable: 0,
+                  misleading: 0,
+                  skipped: 0,
+                  avgLatency: null,
+                  routingActive: false,
+                },
               };
             }
             const stillRunning = order.some((o) => !results[o.ip]);

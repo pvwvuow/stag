@@ -18,7 +18,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useStag, type ServiceMeta, type SweepResult } from "@/components/stag-store";
-import { getPreset } from "@/lib/games";
+import { getPreset, primaryProbeHost } from "@/lib/games";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
 import { LiveChart, type LiveSample } from "@/components/ping-chart";
 import { flagUrl, latencyClass, pingQuality } from "@/components/ui-helpers";
@@ -345,7 +345,8 @@ export function Dashboard() {
   const [live, setLive] = useState(false);
   const [samples, setSamples] = useState<LiveSample[]>([]);
   const game = getPreset(st.gameId);
-  const domain = game?.domains[0] ?? null;
+  // Live-monitor the real game/auth server, not the marketing website.
+  const domain = game ? primaryProbeHost(game) ?? null : null;
 
   /* live target: system DNS when connected, else selected/best service.
      Plain value — the live loop reads it through a ref, so a new identity
@@ -557,7 +558,7 @@ export function Dashboard() {
               <span className="ltr ms-2 text-[10px] font-medium text-muted-foreground">{game.latin}</span>
             </p>
             <p className="truncate text-[10px] text-muted-foreground">
-              دامنه: <span className="ltr font-mono">{game.domains[0]}</span> · پورت‌ها:{" "}
+              دامنه: <span className="ltr font-mono">{primaryProbeHost(game)}</span> · پورت‌ها:{" "}
               <span className="ltr font-mono">{game.tcpPorts.join(", ")}</span>
               {dnsOn && (
                 <>
@@ -663,9 +664,15 @@ export function Dashboard() {
             <div className="mt-6 flex items-stretch justify-center divide-x divide-x-reverse divide-border/60">
               <StatItem
                 icon={<Timer className="h-3 w-3" />}
-                label="بهترین پینگ گیم"
+                label="بهترین تأخیر سرور بازی"
                 value={best !== null ? <span className="ltr">{best} ms</span> : "—"}
-                sub={avgAll !== null ? <span className="ltr">میانگین: {avgAll} ms</span> : "هنوز تستی نرفته"}
+                sub={
+                  avgAll !== null ? (
+                    <span className="ltr">میانگین: {avgAll} ms · TCP/443</span>
+                  ) : (
+                    "هنوز تستی نرفته"
+                  )
+                }
               />
               <StatItem
                 icon={<ArrowDown className="h-3 w-3" />}
@@ -791,16 +798,16 @@ export function Dashboard() {
                 </div>
                 <LiveChart samples={samples} />
                 <p className="mt-1.5 text-center text-[9px] text-muted-foreground">
-                  هر ۲ ثانیه یک پکت واقعی به سرور بازی{" "}
+                  هر ۲ ثانیه یک دست‌دادن TCP به سرور بازی{" "}
                   {game?.tcpPorts.length ? (
                     <span className="ltr">
                       (پورت {game.tcpPorts.join("/")}، ۴۴۳)
                     </span>
                   ) : null}{" "}
-                  —{" "}
+                  — این تأخیرِ رسیدن به سرور است، نه پینگ داخل گیم (UDP){" "}
                   {pingQuality(liveStats.avg).label !== "—"
-                    ? `کیفیت: ${pingQuality(liveStats.avg).label}`
-                    : "در انتظار داده"}
+                    ? `· کیفیت: ${pingQuality(liveStats.avg).label}`
+                    : "· در انتظار داده"}
                 </p>
                 {liveStats.total > 0 && liveStats.kind !== "tcp" && (
                   <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
