@@ -92,6 +92,11 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
             وب‌سایت (غیرحیاتی)
           </span>
         )}
+        {r.ipv6 && (
+          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-600 dark:text-sky-400">
+            IPv6
+          </span>
+        )}
         {r.publiclyUnresolvable ? (
           <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400">
             خارج از قضاوت

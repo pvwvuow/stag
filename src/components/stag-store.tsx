@@ -32,6 +32,8 @@ export interface DomainResult {
   ips: string[];
   error: string | null;
   baselineIps: string[];
+  /** where the baseline came from: encrypted DoH (trusted) or plain UDP (fallback) */
+  baselineSource?: "doh" | "udp" | "none";
   differs: boolean | null;
   publiclyUnresolvable: boolean;
   /** DNS answered with a private/unroutable IP. */
@@ -40,6 +42,8 @@ export interface DomainResult {
   misleading: boolean;
   /** true reachable, false resolved-but-unreachable, null didn't resolve. */
   reachable: boolean | null;
+  /** the answer(s) were IPv6/AAAA only */
+  ipv6?: boolean;
   tcp: TcpResult[];
 }
 

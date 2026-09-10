@@ -5,10 +5,20 @@ import net from "node:net";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const QUERY_TIMEOUT_MS = 3000;
-const TCP_TIMEOUT_MS = 2500;
+const DEFAULT_QUERY_TIMEOUT_MS = 3000;
+const MIN_QUERY_TIMEOUT_MS = 1000;
+const MAX_QUERY_TIMEOUT_MS = 6000;
+const DEFAULT_TCP_TIMEOUT_MS = 2500;
+const MIN_TCP_TIMEOUT_MS = 1000;
+const MAX_TCP_TIMEOUT_MS = 6000;
 const MAX_PROBE_IPS = 3;
 const MAX_PROBE_PORTS = 4;
+
+function clamp(n: unknown, min: number, max: number, dflt: number): number {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return dflt;
+  return Math.min(max, Math.max(min, Math.round(v)));
+}
 
 /**
  * Game-aware ping, tuned for accuracy ("نهایت دقت"):
@@ -39,6 +49,14 @@ function cleanDomain(raw: unknown): string | null {
 }
 
 function isPrivateIp(ip: string): boolean {
+  if (ip.includes(":")) {
+    const v6 = ip.toLowerCase();
+    if (v6 === "::1" || v6 === "::") return true;
+    if (v6.startsWith("fe8") || v6.startsWith("fe9") || v6.startsWith("fea") || v6.startsWith("feb"))
+      return true; // fe80::/10 link-local
+    if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // fc00::/7 unique-local
+    return false; // public/global IPv6 is routable
+  }
   const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return true; // not IPv4 — treat as non-public
   const [a, b] = [Number(m[1]), Number(m[2])];
@@ -51,7 +69,7 @@ function isPrivateIp(ip: string): boolean {
   );
 }
 
-function tcpTest(host: string, port: number): Promise<{ ok: boolean; latencyMs: number | null }> {
+function tcpTest(host: string, port: number, timeout: number): Promise<{ ok: boolean; latencyMs: number | null }> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     let settled = false;
@@ -62,7 +80,7 @@ function tcpTest(host: string, port: number): Promise<{ ok: boolean; latencyMs: 
       socket.destroy();
       resolve({ ok, latencyMs: ok ? Math.round(performance.now() - start) : null });
     };
-    socket.setTimeout(TCP_TIMEOUT_MS);
+    socket.setTimeout(timeout);
     socket.once("connect", () => finish(true));
     socket.once("timeout", () => finish(false));
     socket.once("error", () => finish(false));
@@ -75,7 +93,7 @@ function tcpTest(host: string, port: number): Promise<{ ok: boolean; latencyMs: 
 }
 
 export async function POST(req: NextRequest) {
-  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[] };
+  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number };
   try {
     body = await req.json();
   } catch {
@@ -89,6 +107,9 @@ export async function POST(req: NextRequest) {
   }
   const domain = cleanDomain(body.domain) ?? "www.google.com";
   const wantTcp = body.tcp === true;
+  // Client-tunable timeouts, clamped to safe bounds (2.6).
+  const queryTimeout = clamp(body.queryTimeoutMs, MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS);
+  const tcpTimeout = clamp(body.tcpTimeoutMs, MIN_TCP_TIMEOUT_MS, MAX_TCP_TIMEOUT_MS, DEFAULT_TCP_TIMEOUT_MS);
   const ports = [
     ...new Set(
       (body.ports ?? [])
@@ -99,25 +120,41 @@ export async function POST(req: NextRequest) {
   if (ports.length === 0 || !ports.includes(443)) ports.push(443);
   const probePorts = ports.slice(0, MAX_PROBE_PORTS);
 
-  const resolver = new Resolver({ timeout: QUERY_TIMEOUT_MS, tries: 1 });
+  const resolver = new Resolver({ timeout: queryTimeout, tries: 1 });
   if (!useSystem) resolver.setServers([rawServer]);
 
-  const start = performance.now();
-  try {
-    const ips = await Promise.race([
-      resolver.resolve4(domain, { ttl: false }),
+  const race = <T>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
       new Promise<never>((_, reject) => {
         const t = setTimeout(() => {
           const err = new Error("timeout") as NodeJS.ErrnoException;
           err.code = "ETIMEDOUT";
           reject(err);
-        }, QUERY_TIMEOUT_MS + 500);
+        }, queryTimeout + 500);
         t.unref?.();
       }),
     ]);
 
+  const start = performance.now();
+  try {
+    // Prefer IPv4 (TCP probe / familiar behaviour); if the domain has no A
+    // record, fall back to AAAA so IPv6-only services are not treated as dead (2.3).
+    let answers: string[] = [];
+    try {
+      answers = (await race(resolver.resolve4(domain, { ttl: false }))) as string[];
+    } catch {
+      answers = [];
+    }
+    if (answers.length === 0) {
+      answers = (await race(resolver.resolve6(domain, { ttl: false }))) as string[];
+    }
+
     const dnsMs = Math.round(performance.now() - start);
-    const resolved = (ips as string[]).filter((x) => net.isIP(x) === 4);
+    // Keep any valid IP (v4 or v6); v4 first for the TCP probe order.
+    const resolved = (answers as string[])
+      .filter((x) => net.isIP(x) !== 0)
+      .sort((a, b) => (net.isIP(a) === 4 ? 0 : 1) - (net.isIP(b) === 4 ? 0 : 1));
     const firstIp = resolved[0] ?? null;
     const privateIp = firstIp ? isPrivateIp(firstIp) : false;
 
@@ -132,7 +169,7 @@ export async function POST(req: NextRequest) {
       for (const ip of resolved.slice(0, MAX_PROBE_IPS)) {
         for (const port of probePorts) targets.push({ ip, port });
       }
-      const results = await Promise.all(targets.map((t) => tcpTest(t.ip, t.port)));
+      const results = await Promise.all(targets.map((t) => tcpTest(t.ip, t.port, tcpTimeout)));
       let best: { ms: number; port: number; ip: string } | null = null;
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
