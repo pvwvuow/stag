@@ -55,6 +55,10 @@ export interface SweepResult {
   dnsMs: number | null;
   tcpMs: number | null;
   tcpOk: boolean | null;
+  /** game port that produced the RTT (null => DNS-time fallback) */
+  viaPort?: number | null;
+  /** DNS answered with a private-range IP (internal routing / possible hijack) */
+  privateIp?: boolean;
 }
 
 export interface HistoryPoint {
@@ -103,6 +107,26 @@ interface StagState {
   selectedService: string | null;
   gameId: string | null;
   tcpEnabled: boolean;
+}
+
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "error"
+  | "unsupported";
+
+export interface UpdateState {
+  status: UpdateStatus;
+  version: string | null;
+  releaseNotes: string | null;
+  percent: number;
+  transferred: number;
+  total: number;
+  bps: number;
+  error: string | null;
 }
 
 const STATE_KEY = "stag.state.v3";
@@ -220,6 +244,11 @@ interface StagContextValue extends StagState {
   disconnectDns: () => Promise<void>;
   flushDns: () => Promise<void>;
   checkConnection: () => Promise<void>;
+  /* in-app updates */
+  update: UpdateState;
+  checkForUpdates: () => Promise<void>;
+  downloadUpdate: () => Promise<void>;
+  installUpdate: () => void;
 }
 
 const StagContext = createContext<StagContextValue | null>(null);
@@ -246,6 +275,16 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     on: false,
   });
   const [dnsAction, setDnsAction] = useState<null | "apply" | "off" | "flush">(null);
+  const [update, setUpdate] = useState<UpdateState>({
+    status: "idle",
+    version: null,
+    releaseNotes: null,
+    percent: 0,
+    transferred: 0,
+    total: 0,
+    bps: 0,
+    error: null,
+  });
   const hydrateRef = useRef(false);
 
   useEffect(() => {
@@ -416,7 +455,12 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       fetch("/api/ping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server: ip, domain, tcp: state.tcpEnabled }),
+        body: JSON.stringify({
+          server: ip,
+          domain,
+          tcp: state.tcpEnabled,
+          ports: game?.tcpPorts ?? [],
+        }),
       })
         .then((r) => r.json())
         .then(
@@ -426,6 +470,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             dnsMs?: number | null;
             tcpMs?: number | null;
             tcpOk?: boolean | null;
+            viaPort?: number | null;
+            privateIp?: boolean;
           }) =>
             apply(ip, {
               ok: !!d.ok,
@@ -433,9 +479,21 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
               dnsMs: d.dnsMs ?? null,
               tcpMs: d.tcpMs ?? null,
               tcpOk: d.tcpOk ?? null,
+              viaPort: d.viaPort ?? null,
+              privateIp: !!d.privateIp,
             }),
         )
-        .catch(() => apply(ip, { ok: false, ms: null, dnsMs: null, tcpMs: null, tcpOk: null }));
+        .catch(() =>
+          apply(ip, {
+            ok: false,
+            ms: null,
+            dnsMs: null,
+            tcpMs: null,
+            tcpOk: null,
+            viaPort: null,
+            privateIp: false,
+          }),
+        );
     });
   }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, toast]);
 
@@ -720,6 +778,57 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     }
   }, [toast]);
 
+  /* ----------------------- in-app updates ------------------------ */
+
+  useEffect(() => {
+    const api = window.electronAPI?.updater;
+    if (!api) return;
+    let alive = true;
+    api
+      .getState()
+      .then((s) => {
+        if (alive) setUpdate(s);
+      })
+      .catch(() => {});
+    const off = api.onEvent((s) => setUpdate(s));
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  const checkForUpdates = useCallback(async () => {
+    const api = window.electronAPI?.updater;
+    if (!api) {
+      toast({
+        title: "فقط در نسخه دسکتاپ",
+        description: "بروزرسانی خودکار مخصوص برنامه ویندوزی STAG است.",
+      });
+      return;
+    }
+    try {
+      const s = await api.check();
+      setUpdate(s);
+    } catch {
+      setUpdate((u) => ({ ...u, status: "error", error: "بررسی بروزرسانی ممکن نشد" }));
+    }
+  }, [toast]);
+
+  const downloadUpdate = useCallback(async () => {
+    const api = window.electronAPI?.updater;
+    if (!api) return;
+    try {
+      const s = await api.download();
+      setUpdate(s);
+    } catch {
+      setUpdate((u) => ({ ...u, status: "error", error: "دانلود بروزرسانی شروع نشد" }));
+    }
+  }, []);
+
+  const installUpdate = useCallback(() => {
+    window.electronAPI?.updater?.install();
+  }, []);
+
   const value: StagContextValue = {
     ...state,
     view,
@@ -748,6 +857,10 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     disconnectDns,
     flushDns,
     checkConnection,
+    update,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate,
   };
 
   return <StagContext.Provider value={value}>{children}</StagContext.Provider>;

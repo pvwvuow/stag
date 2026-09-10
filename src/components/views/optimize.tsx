@@ -8,14 +8,13 @@ import {
   Timer,
   Route,
   CheckCircle2,
-  AlertTriangle,
   XCircle,
   Info,
   Swords,
+  ChevronDown,
 } from "lucide-react";
 import { useStag, GAME_PRESETS, getPreset, type ApiResult, type ServiceMeta } from "@/components/stag-store";
 import { GameGlyph } from "@/components/brand";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
@@ -51,10 +50,10 @@ function GameCard({
     <button
       onClick={onSelect}
       title={hint}
-      className={`group relative flex flex-col items-center gap-2 rounded-2xl border p-3.5 transition-all ${
+      className={`group relative flex flex-col items-center gap-2 rounded-[22px] p-3.5 transition-all ${
         selected
-          ? "border-primary bg-primary/[0.08] shadow-[0_8px_30px_-12px] shadow-primary/40"
-          : "border-border bg-card/70 hover:border-primary/40 hover:bg-muted/40"
+          ? "bg-primary/[0.09] ring-2 ring-primary/70 shadow-[0_8px_30px_-12px] shadow-primary/40"
+          : "bg-card/50 hover:bg-muted/50 hover:ring-1 hover:ring-primary/30"
       }`}
     >
       {selected && (
@@ -63,7 +62,7 @@ function GameCard({
         </span>
       )}
       <span
-        className={`flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+        className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-colors ${
           selected ? "bg-primary/15 text-primary" : "bg-muted/70 text-muted-foreground group-hover:text-primary/80"
         }`}
       >
@@ -84,19 +83,18 @@ function GameCard({
 
 function DomainRow({ r }: { r: ApiResult["results"][number] }) {
   return (
-    <div className="space-y-1 border-b border-border/40 px-3 py-2 last:border-b-0">
+    <div className="space-y-1 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         {statusIcon(r.status, r.publiclyUnresolvable)}
         <span className="ltr break-all font-mono text-xs text-foreground/90">{r.domain}</span>
         {r.publiclyUnresolvable ? (
-          <Badge className="border border-zinc-500/40 bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400">
+          <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400">
             خارج از قضاوت
-          </Badge>
+          </span>
         ) : r.differs === true ? (
-          <Badge className="border border-amber-500/40 bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400">
-            <Route className="h-3 w-3" />
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
             مسیر اختصاصی
-          </Badge>
+          </span>
         ) : null}
         <span className={`ltr ms-auto font-mono text-[11px] ${latencyClass(r.latencyMs)}`}>
           {r.latencyMs !== null ? `${r.latencyMs}ms` : ""}
@@ -115,10 +113,10 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
           {r.tcp.map((t) => (
             <span
               key={t.port}
-              className={`ltr rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
+              className={`ltr rounded-full px-2 py-0.5 font-mono text-[10px] font-bold ${
                 t.ok
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                  : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
               }`}
             >
               TCP {t.port} {t.ok ? `✓ ${t.latencyMs}ms` : "✗"}
@@ -145,7 +143,7 @@ function IpResultCard({
 }) {
   if (!res) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-border bg-card/70 p-3.5">
+      <div className="flex items-center gap-3 rounded-[22px] bg-muted/40 p-3.5">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         <span className="ltr font-mono text-sm">{ip}</span>
         <span className="text-xs text-muted-foreground">
@@ -158,14 +156,16 @@ function IpResultCard({
   const s = res.summary;
   return (
     <div
-      className={`overflow-hidden rounded-2xl border bg-card/70 ${
-        isWinner ? "border-primary/60 shadow-[0_8px_30px_-14px] shadow-primary/50" : "border-border"
+      className={`overflow-hidden rounded-[22px] transition-colors ${
+        isWinner ? "bg-primary/[0.07] ring-1 ring-primary/50" : "bg-card/50"
       }`}
     >
       <button onClick={onToggle} className="flex w-full flex-wrap items-center gap-2 p-3.5 text-start">
         {isWinner && <Trophy className="h-4 w-4 shrink-0 text-primary" />}
         <span className="ltr font-mono text-sm font-bold">{ip}</span>
-        <Badge className={`border font-bold ${TONE_BADGE[tone as Tone]}`}>{label}</Badge>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${TONE_BADGE[tone as Tone]}`}>
+          {label}
+        </span>
         <span className="ms-auto flex items-center gap-3 text-[11px] text-muted-foreground">
           <span>
             {s.resolved}/{s.total} دامنه
@@ -176,10 +176,12 @@ function IpResultCard({
               {s.avgLatency}ms
             </span>
           )}
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-border/50 bg-background/40">
+        <div className="bg-background/40">
+          <div className="mx-3.5 hairline" />
           {res.results.length === 0 ? (
             <p className="p-3 text-xs text-muted-foreground">نتیجه‌ای ثبت نشد — احتمالاً DNS هیچ پاسخی نداد.</p>
           ) : (
@@ -284,7 +286,7 @@ export function Optimize() {
       </section>
 
       {/* run strip */}
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card/70 p-4">
+      <section className="flex flex-wrap items-center justify-between gap-3 panel p-4">
         <div className="min-w-0">
           {game ? (
             <>
@@ -315,7 +317,7 @@ export function Optimize() {
           <button
             onClick={st.runFullTest}
             disabled={st.fullTest.inProgress || !game || st.services.length === 0}
-            className="flex min-h-[42px] items-center gap-2 rounded-xl bg-primary px-5 font-bold text-primary-foreground shadow-[0_0_30px_-8px] shadow-primary/50 transition-opacity hover:bg-primary/90 disabled:opacity-50"
+            className="flex min-h-[42px] items-center gap-2 rounded-full bg-primary px-6 font-bold text-primary-foreground shadow-[0_0_30px_-8px] shadow-primary/50 transition-opacity hover:bg-primary/90 disabled:opacity-50"
           >
             {st.fullTest.inProgress ? (
               <>
@@ -361,10 +363,10 @@ export function Optimize() {
                       </span>
                     )}
                     {groupHasWinner && (
-                      <Badge className="border border-primary/40 bg-primary/15 text-[10px] text-primary">
+                      <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-black text-primary">
                         <Trophy className="h-3 w-3" />
                         بهترین سرویس
-                      </Badge>
+                      </span>
                     )}
                   </div>
                   {/* the DNS addresses of this service, side by side */}
@@ -387,40 +389,42 @@ export function Optimize() {
       )}
 
       {/* interpretation help */}
-      <section className="grid gap-2.5 pb-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card/60 p-3">
-          <p className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="h-3.5 w-3.5" /> DNS کار میکنه
-          </p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            همه دامنه‌های بازی پاسخ سالم دادند؛ ست‌کردنش روی کنسول/PC امنه.
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card/60 p-3">
-          <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
-            <Route className="h-3.5 w-3.5" /> مسیر اختصاصی
-          </p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            این DNS آی‌پی متفاوت از DNSهای معمولی میده — در سرویس‌های گیمینگ نشانه‌ی روتینگ اختصاصیه
-            (نه تضمین صددرصدی).
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card/60 p-3">
-          <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
-            <XCircle className="h-3.5 w-3.5" /> DNS جواب نمیده
-          </p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card/60 p-3">
-          <p className="flex items-center gap-1.5 text-xs font-bold">
-            <Info className="h-3.5 w-3.5 text-muted-foreground" /> نکته
-          </p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            تست از سیستم خودت اجرا میشه؛ پس DNSهای داخلی ایران هم واقعاً سنجیده میشن — فقط
-            مطمئن شو فایروال پورت ۵۳ (UDP) را نبسته باشد.
-          </p>
+      <section className="panel overflow-hidden pb-4">
+        <div className="grid gap-px bg-border/40 sm:grid-cols-2">
+          <div className="bg-card/80 p-3.5">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3.5 w-3.5" /> DNS کار میکنه
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              همه دامنه‌های بازی پاسخ سالم دادند؛ ست‌کردنش روی کنسول/PC امنه.
+            </p>
+          </div>
+          <div className="bg-card/80 p-3.5">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+              <Route className="h-3.5 w-3.5" /> مسیر اختصاصی
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              این DNS آی‌پی متفاوت از DNSهای معمولی میده — در سرویس‌های گیمینگ نشانه‌ی روتینگ اختصاصیه
+              (نه تضمین صددرصدی).
+            </p>
+          </div>
+          <div className="bg-card/80 p-3.5">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
+              <XCircle className="h-3.5 w-3.5" /> DNS جواب نمیده
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
+            </p>
+          </div>
+          <div className="bg-card/80 p-3.5">
+            <p className="flex items-center gap-1.5 text-xs font-bold">
+              <Info className="h-3.5 w-3.5 text-muted-foreground" /> نکته
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              تست از سیستم خودت اجرا میشه؛ پس DNSهای داخلی ایران هم واقعاً سنجیده میشن — فقط
+              مطمئن شو فایروال پورت ۵۳ (UDP) را نبسته باشد.
+            </p>
+          </div>
         </div>
       </section>
     </div>

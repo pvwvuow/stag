@@ -21,4 +21,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   /** App info */
   getVersion: () => ipcRenderer.invoke("app:get-version"),
+
+  /** Open https links in the system browser (release page fallback etc.) */
+  openExternal: (url) => ipcRenderer.send("app:open-url", url),
+
+  /** In-app updates (electron-updater, differential blockmap downloads) */
+  updater: {
+    getState: () => ipcRenderer.invoke("update:get-state"),
+    check: () => ipcRenderer.invoke("update:check"),
+    download: () => ipcRenderer.invoke("update:download"),
+    install: () => ipcRenderer.send("update:install"),
+    onEvent: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("update:event", listener);
+      return () => ipcRenderer.removeListener("update:event", listener);
+    },
+  },
 });

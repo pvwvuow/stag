@@ -7,7 +7,6 @@ import {
   Timer,
   ArrowDown,
   ShieldCheck,
-  Globe,
   Check,
   Activity,
   Radar,
@@ -16,15 +15,15 @@ import {
   ChevronLeft,
   Plug,
   Info,
+  CheckCircle2,
 } from "lucide-react";
-import { useStag, DNS_CATALOG, type ServiceMeta, type SweepResult } from "@/components/stag-store";
+import { useStag, type ServiceMeta, type SweepResult } from "@/components/stag-store";
 import { getPreset } from "@/lib/games";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
 import { LiveChart, type LiveSample } from "@/components/ping-chart";
 import { flagUrl, latencyClass, pingQuality } from "@/components/ui-helpers";
 import { useToast } from "@/hooks/use-toast";
 import { GameGlyph } from "@/components/brand";
-import { Badge } from "@/components/ui/badge";
 
 /* ------------------------------ atoms ------------------------------ */
 
@@ -62,7 +61,8 @@ export function FlagCircle({ cc, size = "h-9 w-9" }: { cc: string; size?: string
   );
 }
 
-function StatCard({
+/** Minimal inline stat — no box, just type + hairline neighbors. */
+function StatItem({
   icon,
   label,
   value,
@@ -76,13 +76,13 @@ function StatCard({
   valueCls?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-card/70 p-4 text-center">
-      <p className="mb-1 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+    <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-2 text-center">
+      <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
         {icon}
         {label}
       </p>
-      <p className={`text-2xl font-black leading-tight ${valueCls ?? "text-primary"}`}>{value}</p>
-      {sub && <p className="mt-1 text-[10px] text-muted-foreground">{sub}</p>}
+      <p className={`text-xl font-black leading-tight ${valueCls ?? "text-primary"}`}>{value}</p>
+      {sub && <p className="text-[9px] text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -104,13 +104,58 @@ function hasResultOf(meta: ServiceMeta, sweep: Record<string, SweepResult>): boo
   return meta.ips.some((ip) => !!sweep[ip]);
 }
 
-/* ------------------------- service result card ------------------------- */
+/* ------------------------- service result row ------------------------- */
 
-function ServiceSweepCard({ meta }: { meta: ServiceMeta }) {
+function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
+  const pending = !r;
+  return (
+    <span
+      className={`flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors ${
+        !r
+          ? "bg-muted/50"
+          : r.ok
+            ? "bg-emerald-500/[0.08]"
+            : "bg-rose-500/[0.08]"
+      }`}
+    >
+      <span className="ltr font-mono text-[10px] text-muted-foreground" title={ip}>
+        {ip}
+      </span>
+      {pending ? (
+        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+      ) : r.ok ? (
+        <>
+          <span className={`ltr text-sm font-black leading-none ${latencyClass(r.ms)}`}>
+            {r.ms}
+            <span className="ms-0.5 text-[8px] font-bold text-muted-foreground">ms</span>
+          </span>
+          <SignalBars ms={r.ms} />
+          {r.viaPort != null && (
+            <span className="ltr text-[8px] font-medium text-muted-foreground/80">
+              p{r.viaPort}
+            </span>
+          )}
+          {r.tcpOk === false && (
+            <span className="text-[8px] font-medium text-amber-600 dark:text-amber-400">
+              ۴۴۳ بسته
+            </span>
+          )}
+          {r.privateIp && (
+            <span className="text-[8px] font-medium text-muted-foreground/80" title="DNS یک IP داخلی داد">
+              IP داخلی
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-[10px] font-bold text-rose-500">بی‌پاسخ</span>
+      )}
+    </span>
+  );
+}
+
+function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
   const st = useStag();
   const { toast } = useToast();
-  const pairs = meta.ips.map((ip) => ({ ip, r: st.sweepResults[ip] }));
-  const pending = st.sweeping && pairs.some((p) => !p.r);
   const bestMs = bestMsOf(meta, st.sweepResults);
   const tested = hasResultOf(meta, st.sweepResults);
   const winner = st.bestService?.id === meta.id && !st.sweeping && bestMs !== null;
@@ -126,111 +171,74 @@ function ServiceSweepCard({ meta }: { meta: ServiceMeta }) {
 
   return (
     <div
-      className={`rounded-2xl border p-3.5 transition-colors ${
-        winner
-          ? "border-primary/60 bg-primary/[0.06] shadow-[0_8px_30px_-14px] shadow-primary/50"
-          : "border-border bg-card/70"
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 transition-colors ${
+        winner ? "rounded-[22px] bg-primary/[0.07]" : ""
       }`}
     >
-      {/* service header — name + which service this is */}
-      <div className="flex items-center gap-2.5">
-        <FlagCircle cc={meta.cc} size="h-8 w-8" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold" dir="rtl">
-            {meta.name}
-            {!meta.custom && (
-              <span className="ltr ms-1.5 text-[10px] font-medium text-muted-foreground">
-                {meta.latin}
-              </span>
-            )}
-          </p>
-          <p className="truncate text-[10px] text-muted-foreground">{groupLabel(meta)}</p>
-        </div>
-        {winner && (
-          <Badge className="border border-primary/40 bg-primary/15 text-[10px] text-primary">
-            بهترین
-          </Badge>
-        )}
-        <span className="ltr font-mono text-sm font-black text-primary">
-          {bestMs !== null ? `${bestMs} ms` : pending ? "…" : tested ? "—" : ""}
-        </span>
+      <FlagCircle cc={meta.cc} size="h-8 w-8" />
+      <div className="min-w-0 basis-40">
+        <p className="truncate text-sm font-bold" dir="rtl">
+          {meta.name}
+          {!meta.custom && (
+            <span className="ltr ms-1.5 text-[10px] font-medium text-muted-foreground">
+              {meta.latin}
+            </span>
+          )}
+        </p>
+        <p className="truncate text-[10px] text-muted-foreground">{groupLabel(meta)}</p>
       </div>
 
-      {/* the paired DNS addresses — side by side */}
-      <div className={`mt-2.5 grid gap-2 ${meta.ips.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
-        {pairs.map(({ ip, r }) => (
-          <div
-            key={ip}
-            className={`rounded-xl border p-2 text-center ${
-              r
-                ? r.ok
-                  ? "border-emerald-500/30 bg-emerald-500/[0.05]"
-                  : "border-rose-500/30 bg-rose-500/[0.05]"
-                : "border-border bg-background/60"
-            }`}
-          >
-            <p className="ltr truncate font-mono text-[10px] text-muted-foreground" title={ip}>
-              {ip}
-            </p>
-            {pending && !r ? (
-              <Loader2 className="mx-auto mt-1.5 h-4 w-4 animate-spin text-primary" />
-            ) : r?.ok ? (
-              <>
-                <p className={`ltr text-lg font-black leading-tight ${latencyClass(r.ms)}`}>
-                  {r.ms}
-                  <span className="ms-1 text-[10px] font-bold text-muted-foreground">ms</span>
-                </p>
-                <div className="mt-1 flex items-center justify-center gap-1.5">
-                  <SignalBars ms={r.ms} />
-                  {r.tcpOk === true && (
-                    <span className="ltr text-[9px] text-muted-foreground">tcp {r.tcpMs}ms</span>
-                  )}
-                  {r.tcpOk === false && (
-                    <span className="text-[9px] text-amber-600 dark:text-amber-400">
-                      پورت ۴۴۳ بسته
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : r ? (
-              <p className="mt-1.5 text-xs font-bold text-rose-500">بی‌پاسخ</p>
-            ) : (
-              <p className="mt-1.5 text-xs text-muted-foreground">—</p>
-            )}
-          </div>
+      {/* paired DNS addresses — side by side */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {meta.ips.map((ip) => (
+          <IpPill key={ip} ip={ip} r={st.sweepResults[ip]} />
         ))}
       </div>
 
-      {/* actions */}
-      <div className="mt-2.5 flex flex-wrap gap-2">
+      <div className="ms-auto flex items-center gap-2">
+        {winner && (
+          <span className="rounded-full bg-primary px-2.5 py-1 text-[10px] font-black text-primary-foreground">
+            بهترین
+          </span>
+        )}
+        <span className="ltr w-16 text-end font-mono text-base font-black text-primary">
+          {bestMs !== null ? `${bestMs} ms` : pendingOrDash(tested, st.sweeping && !tested)}
+        </span>
         <button
           onClick={() => st.connectDns(meta.id)}
           disabled={st.dnsAction !== null}
-          className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-[11px] font-bold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+          title="این DNS را روی ویندوز فعال کن"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"
         >
           <Plug className="h-3.5 w-3.5" />
-          وصل این DNS
         </button>
         <button
           onClick={() => st.selectService(meta.id)}
-          className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors ${
+          title={selected ? "انتخاب‌شده برای دکمه برق" : "انتخاب به‌عنوان DNS پیش‌فرض دکمه برق"}
+          className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
             selected
               ? "bg-primary text-primary-foreground"
               : "bg-muted/70 text-muted-foreground hover:text-foreground"
           }`}
         >
-          {selected ? "انتخاب‌شده" : "انتخاب"}
+          {selected ? <Check className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
         </button>
         <button
           onClick={copy}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+          title="کپی آی‌پی‌ها"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
         >
           <Copy className="h-3.5 w-3.5" />
-          کپی
         </button>
       </div>
     </div>
   );
+}
+
+function pendingOrDash(tested: boolean, pending: boolean): string {
+  if (pending) return "…";
+  if (tested) return "—";
+  return "";
 }
 
 /* --------------------------- system DNS card --------------------------- */
@@ -239,7 +247,7 @@ function SystemDnsCard() {
   const st = useStag();
   const s = st.dnsSys;
   return (
-    <section className="rounded-2xl border border-border bg-card/70 p-4">
+    <section className="panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-sm font-bold">
           <ShieldCheck className="h-4 w-4 text-primary" />
@@ -247,7 +255,7 @@ function SystemDnsCard() {
         </h2>
         <button
           onClick={() => st.refreshDns()}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
           title="بررسی دوباره"
           aria-label="بررسی دوباره"
         >
@@ -266,60 +274,52 @@ function SystemDnsCard() {
         </p>
       ) : (
         <>
-          <div
-            className={`rounded-xl border p-3 ${
-              s.on ? "border-emerald-500/40 bg-emerald-500/[0.06]" : "border-border bg-background/60"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <span
-                className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                  s.on ? "bg-emerald-500 shadow-[0_0_8px] shadow-emerald-500/60" : "bg-muted-foreground/40"
-                }`}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-black">
-                  {s.on ? "DNS روشنه" : "DNS خاموشه"}
-                </p>
-                <p className="truncate text-[10px] text-muted-foreground">
-                  {s.on
-                    ? st.sysMatch
-                      ? `${st.sysMatch.name} (${st.sysMatch.latin})`
-                      : "DNS دستی — از خارج STAG ست شده"
-                    : "سیستم روی حالت خودکار (DHCP) است"}
-                </p>
-              </div>
+          <div className="flex items-center gap-2.5">
+            <span
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                s.on ? "bg-emerald-500 shadow-[0_0_8px] shadow-emerald-500/60" : "bg-muted-foreground/40"
+              }`}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black">{s.on ? "DNS روشنه" : "DNS خاموشه"}</p>
+              <p className="truncate text-[10px] text-muted-foreground">
+                {s.on
+                  ? st.sysMatch
+                    ? `${st.sysMatch.name} (${st.sysMatch.latin})`
+                    : "DNS دستی — از خارج STAG ست شده"
+                  : "سیستم روی حالت خودکار (DHCP) است"}
+              </p>
             </div>
-            {s.on && s.primary && s.primary.servers.length > 0 && (
-              <p className="ltr mt-2 rounded-lg bg-muted/60 px-2 py-1 text-center font-mono text-[11px] text-muted-foreground">
-                {s.primary.servers.join("  ·  ")}
-              </p>
-            )}
-            {s.primary && (
-              <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-                اینترفیس: <span className="ltr font-mono">{s.primary.alias}</span>
-              </p>
-            )}
           </div>
+          {s.on && s.primary && s.primary.servers.length > 0 && (
+            <p className="ltr mt-2.5 rounded-full bg-muted/60 px-3 py-1.5 text-center font-mono text-[11px] text-muted-foreground">
+              {s.primary.servers.join("  ·  ")}
+            </p>
+          )}
+          {s.primary && (
+            <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
+              اینترفیس: <span className="ltr font-mono">{s.primary.alias}</span>
+            </p>
+          )}
 
           {s.on && !st.sysMatch && (
-            <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
+            <p className="mt-2.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
               <Info className="mt-0.5 h-3 w-3 shrink-0" />
               این DNS را خودت دستی روی سیستم گذاشتی؛ دکمه برق برش می‌گرداند به حالت خودکار.
             </p>
           )}
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 flex gap-2">
             <button
               onClick={st.flushDns}
               disabled={st.dnsAction !== null}
-              className="rounded-lg bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              className="flex-1 rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
             >
               پاک کردن کش DNS
             </button>
             <button
               onClick={st.checkConnection}
-              className="rounded-lg bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
+              className="flex-1 rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
             >
               بررسی اتصال اینترنت
             </button>
@@ -339,9 +339,13 @@ export function Dashboard() {
   const game = getPreset(st.gameId);
   const domain = game?.domains[0] ?? null;
 
-  /* live target: system DNS when connected, else selected/best service */
+  /* live target: system DNS when connected, else selected/best service.
+     Plain value — the live loop reads it through a ref, so a new identity
+     per render is harmless (and the compiler auto-memoizes). */
   const liveTarget = (() => {
-    if (st.dnsSys.on) return { server: "system", label: "DNS سیستم" };
+    if (st.dnsSys.on) {
+      return { server: "system", label: st.sysMatch ? `DNS سیستم (${st.sysMatch.name})` : "DNS سیستم" };
+    }
     const svc =
       (st.selectedService ? st.metaFor(st.selectedService) : null) ??
       (st.bestService ? st.metaFor(st.bestService.id) : null) ??
@@ -351,14 +355,24 @@ export function Dashboard() {
     return { server: svc.ips[0], label: `${svc.latin} — ${svc.ips[0]}` };
   })();
 
-  /* auto-start live monitor once a target exists */
+  /* fresh samples per target — never mix two targets in one chart */
+  const targetKey = liveTarget?.server ?? null;
+  const prevTargetKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevTargetKey.current !== null && prevTargetKey.current !== targetKey) {
+      setSamples([]);
+    }
+    prevTargetKey.current = targetKey;
+  }, [targetKey]);
+
+  /* auto-start live monitor once a target exists / when system DNS turns on */
   const startedOnce = useRef(false);
   useEffect(() => {
-    if (!startedOnce.current && liveTarget) {
+    if ((!startedOnce.current && liveTarget) || st.dnsSys.on) {
       startedOnce.current = true;
       setLive(true);
     }
-  }, [liveTarget]);
+  }, [liveTarget, st.dnsSys.on]);
 
   /* auto-start after each sweep finishes */
   const prevSweeping = useRef(false);
@@ -367,22 +381,41 @@ export function Dashboard() {
     prevSweeping.current = st.sweeping;
   }, [st.sweeping, st.bestService]);
 
-  /* live loop */
+  /* live loop — strict 2s cadence; target/domain read through refs so the
+     interval never restarts (the old per-render effect restarted constantly) */
+  const targetRef = useRef(liveTarget);
+  const domainRef = useRef(domain);
+  const tcpRef = useRef(st.tcpEnabled);
+  const portsRef = useRef<number[]>(game?.tcpPorts ?? []);
+  useEffect(() => {
+    targetRef.current = liveTarget;
+    domainRef.current = domain;
+    tcpRef.current = st.tcpEnabled;
+    portsRef.current = game?.tcpPorts ?? [];
+  }, [liveTarget, domain, st.tcpEnabled, game]);
+
   useEffect(() => {
     if (!live) return;
-    if (!liveTarget) {
+    if (!targetRef.current) {
       setLive(false);
       return;
     }
     let alive = true;
     const tick = async () => {
+      const target = targetRef.current;
+      if (!target) return;
       let ok = false;
       let ms: number | null = null;
       try {
         const r = await fetch("/api/ping", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ server: liveTarget.server, domain, tcp: st.tcpEnabled }),
+          body: JSON.stringify({
+            server: target.server,
+            domain: domainRef.current,
+            tcp: tcpRef.current,
+            ports: portsRef.current,
+          }),
         });
         const d = await r.json();
         ok = !!d.ok;
@@ -394,12 +427,15 @@ export function Dashboard() {
       setSamples((s) => [...s.slice(-59), { t: Date.now(), ok, ms }]);
     };
     tick();
-    const iv = setInterval(tick, 2000);
+    const iv = setInterval(() => {
+      if (document.hidden) return; // skip probes while minimized
+      tick();
+    }, 2000);
     return () => {
       alive = false;
       clearInterval(iv);
     };
-  }, [live, liveTarget, domain, st.tcpEnabled]);
+  }, [live]);
 
   const liveStats = useMemo(() => {
     const ok = samples.filter((s) => s.ok && s.ms !== null);
@@ -426,6 +462,13 @@ export function Dashboard() {
     else st.connectDns();
   };
 
+  /* what the power button will apply right now */
+  const powerTarget = (() => {
+    if (dnsOn) return st.sysMatch;
+    const id = st.selectedService ?? st.bestService?.id ?? st.services[0]?.id ?? null;
+    return id ? st.metaFor(id) : null;
+  })();
+
   /* stats trio from sweep */
   const okServices = st.services.filter((m) => bestMsOf(m, st.sweepResults) !== null);
   const allTestedMs = Object.values(st.sweepResults)
@@ -447,14 +490,14 @@ export function Dashboard() {
           : { label: "ضعیف", cls: "text-rose-600 dark:text-rose-400" };
 
   /* results order: activation order while sweeping, best-first after */
-  const ordered = useMemo(() => {
+  const ordered = (() => {
     if (st.sweeping) return st.services;
     const scored = st.services.map((m, i) => {
       const b = bestMsOf(m, st.sweepResults);
       return { m, i, score: b ?? (hasResultOf(m, st.sweepResults) ? 50000 : 60000) };
     });
     return scored.sort((a, b) => a.score - b.score || a.i - b.i).map((x) => x.m);
-  }, [st.services, st.sweeping, st.sweepResults]);
+  })();
 
   const powerBadge = busy
     ? st.dnsAction === "apply"
@@ -467,11 +510,11 @@ export function Dashboard() {
       : { text: "DNS خاموشه", cls: "bg-muted/70 text-muted-foreground" };
 
   return (
-    <div className="h-full overflow-y-auto p-4 pt-1" dir="rtl">
+    <div className="h-full overflow-y-auto p-5 pt-2" dir="rtl">
       {/* selected game — always visible on the dashboard */}
       {game ? (
-        <section className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/[0.05] p-3.5">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+        <section className="panel-tint flex flex-wrap items-center gap-3 p-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
             <GameGlyph icon={game.icon} className="h-8 w-8" />
           </span>
           <div className="min-w-0 flex-1">
@@ -483,18 +526,25 @@ export function Dashboard() {
             <p className="truncate text-[10px] text-muted-foreground">
               دامنه: <span className="ltr font-mono">{game.domains[0]}</span> · پورت‌ها:{" "}
               <span className="ltr font-mono">{game.tcpPorts.join(", ")}</span>
+              {dnsOn && (
+                <>
+                  {" "}· <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {st.sysMatch ? `${st.sysMatch.name} روی سیستم فعاله` : "DNS دستی فعاله"}
+                  </span>
+                </>
+              )}
             </p>
           </div>
           <button
             onClick={() => st.setView("optimize")}
-            className="flex shrink-0 items-center gap-1 rounded-lg bg-primary/10 px-3 py-1.5 text-[11px] font-bold text-primary transition-colors hover:bg-primary/20"
+            className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-3.5 py-2 text-[11px] font-bold text-primary transition-colors hover:bg-primary/20"
           >
             تغییر بازی
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
         </section>
       ) : (
-        <section className="rounded-2xl border border-dashed border-border bg-card/60 p-4 text-center">
+        <section className="panel p-4 text-center">
           <p className="text-xs text-muted-foreground">
             هنوز بازی‌ای انتخاب نشده —{" "}
             <button onClick={() => st.setView("optimize")} className="font-bold text-primary hover:underline">
@@ -507,8 +557,8 @@ export function Dashboard() {
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         {/* ---------------- main column ---------------- */}
         <div className="min-w-0 space-y-4">
-          {/* power panel = real DNS on/off */}
-          <section className="rounded-2xl border border-border bg-card/70 p-5">
+          {/* power panel = real DNS on/off + inline stats strip */}
+          <section className="panel px-5 pb-4 pt-6">
             <div className="flex flex-col items-center">
               <button
                 onClick={togglePower}
@@ -524,25 +574,27 @@ export function Dashboard() {
                   )}
                 </span>
               </button>
-              <span className={`mt-4 rounded-full px-5 py-2 text-sm font-bold ${powerBadge.cls}`}>
+              <span className={`mt-5 rounded-full px-5 py-2 text-sm font-bold ${powerBadge.cls}`}>
                 {powerBadge.text}
               </span>
-              <p className="mt-1 text-center text-[11px] leading-relaxed text-muted-foreground">
+              <p className="mt-1.5 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground">
                 {busy
                   ? "پنجره تأیید دسترسی مدیر (UAC) را تأیید کن"
                   : dnsOn
                     ? st.sysMatch
                       ? `${st.sysMatch.name} روی سیستم فعاله — با دکمه بالا خاموشش کن`
                       : "DNS دستی روی سیستم فعاله — با دکمه بالا به حالت خودکار برمی‌گرده"
-                    : "دکمه برق، DNS انتخابی را واقعاً روی ویندوز فعال می‌کند"}
+                    : powerTarget
+                      ? `با دکمه برق، ${powerTarget.name} (${powerTarget.ips.join(" ، ")}) روی ویندوز فعال می‌شود`
+                      : "اول از بخش سرورها یک DNS فعال کن"}
               </p>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               <button
                 onClick={st.runSweep}
                 disabled={st.sweeping}
-                className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-[0_0_20px_-6px] shadow-primary/50 transition-opacity hover:bg-primary/90 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-full bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground shadow-[0_0_20px_-6px] shadow-primary/50 transition-opacity hover:bg-primary/90 disabled:opacity-50"
               >
                 {st.sweeping ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -553,7 +605,7 @@ export function Dashboard() {
               </button>
               <button
                 onClick={() => setLive((v) => !v)}
-                className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-colors ${
+                className={`flex items-center gap-1.5 rounded-full px-5 py-2.5 text-xs font-bold transition-colors ${
                   live
                     ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
                     : "bg-muted/70 text-muted-foreground hover:text-foreground"
@@ -566,45 +618,45 @@ export function Dashboard() {
                 <button
                   onClick={() => st.connectDns()}
                   disabled={busy}
-                  className="flex items-center gap-1.5 rounded-xl bg-emerald-500/15 px-4 py-2 text-xs font-bold text-emerald-600 transition-colors hover:bg-emerald-500/25 disabled:opacity-50 dark:text-emerald-400"
+                  className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-5 py-2.5 text-xs font-bold text-emerald-600 transition-colors hover:bg-emerald-500/25 disabled:opacity-50 dark:text-emerald-400"
                 >
                   <Plug className="h-4 w-4" />
                   وصل بهترین ({st.bestService.ms}ms)
                 </button>
               )}
             </div>
+
+            {/* stats strip — divided, no boxes */}
+            <div className="mt-6 flex items-stretch justify-center divide-x divide-x-reverse divide-border/60">
+              <StatItem
+                icon={<Timer className="h-3 w-3" />}
+                label="بهترین پینگ گیم"
+                value={best !== null ? <span className="ltr">{best} ms</span> : "—"}
+                sub={avgAll !== null ? <span className="ltr">میانگین: {avgAll} ms</span> : "هنوز تستی نرفته"}
+              />
+              <StatItem
+                icon={<ArrowDown className="h-3 w-3" />}
+                label="کاهش پینگ"
+                value={improvement !== null ? <span className="ltr">%{improvement}</span> : "—"}
+                sub="نسبت به میانگین سرورها"
+              />
+              <StatItem
+                icon={<ShieldCheck className="h-3 w-3" />}
+                label="پایداری اتصال"
+                value={<span className={stability.cls}>{stability.label}</span>}
+                sub={
+                  Object.keys(st.sweepResults).length > 0
+                    ? `${okServices.length} از ${st.services.length} سرویس پاسخ داد`
+                    : "—"
+                }
+              />
+            </div>
           </section>
 
-          {/* stats trio */}
-          <div className="grid grid-cols-3 gap-3">
-            <StatCard
-              icon={<Timer className="h-3.5 w-3.5" />}
-              label="بهترین پینگ گیم"
-              value={best !== null ? <span className="ltr">{best} ms</span> : "—"}
-              sub={avgAll !== null ? <span className="ltr">میانگین: {avgAll} ms</span> : "هنوز تستی نرفته"}
-            />
-            <StatCard
-              icon={<ArrowDown className="h-3.5 w-3.5" />}
-              label="کاهش پینگ"
-              value={improvement !== null ? <span className="ltr">%{improvement}</span> : "—"}
-              sub="نسبت به میانگین سرورها"
-            />
-            <StatCard
-              icon={<ShieldCheck className="h-3.5 w-3.5" />}
-              label="پایداری اتصال"
-              value={<span className={stability.cls}>{stability.label}</span>}
-              sub={
-                Object.keys(st.sweepResults).length > 0
-                  ? `${okServices.length} از ${st.services.length} سرویس پاسخ داد`
-                  : "—"
-              }
-            />
-          </div>
-
-          {/* sweep results — grouped per service, paired IPs side by side */}
+          {/* sweep results — one list, hairline dividers, no nested boxes */}
           {st.services.length > 0 ? (
-            <section className="space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-1">
+            <section className="panel overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-1 px-4 pb-2 pt-4">
                 <h2 className="text-sm font-bold">نتایج تست سرورها</h2>
                 <p className="text-[10px] text-muted-foreground">
                   {st.sweeping
@@ -612,12 +664,14 @@ export function Dashboard() {
                     : "هر سرویس با هر دو DNS خودش — مرتب‌شده از بهترین"}
                 </p>
               </div>
-              {ordered.map((m) => (
-                <ServiceSweepCard key={m.id} meta={m} />
-              ))}
+              <div className="divide-y divide-border/50 px-1.5 pb-1.5">
+                {ordered.map((m) => (
+                  <ServiceResultRow key={m.id} meta={m} />
+                ))}
+              </div>
             </section>
           ) : (
-            <section className="rounded-2xl border border-dashed border-border bg-card/60 p-5 text-center">
+            <section className="panel p-5 text-center">
               <p className="text-xs leading-relaxed text-muted-foreground">
                 هنوز سرویسی فعال نکردی —{" "}
                 <button
@@ -637,7 +691,7 @@ export function Dashboard() {
           <SystemDnsCard />
 
           {/* live monitor */}
-          <section className="rounded-2xl border border-border bg-card/70 p-4">
+          <section className="panel p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-sm font-bold">
                 <Activity className="h-4 w-4 text-primary" />
@@ -671,26 +725,26 @@ export function Dashboard() {
                     </>
                   )}
                 </p>
-                <div className="mb-3 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl border border-border bg-background/60 p-2">
+                <div className="mb-3 flex items-stretch justify-between divide-x divide-x-reverse divide-border/50">
+                  <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
                     <p className="text-[9px] text-muted-foreground">پینگ فعلی</p>
-                    <p className={`ltr text-base font-black ${latencyClass(liveStats.cur)}`}>
+                    <p className={`ltr text-lg font-black ${latencyClass(liveStats.cur)}`}>
                       {liveStats.cur !== null ? liveStats.cur : "—"}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-border bg-background/60 p-2">
+                  <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
                     <p className="text-[9px] text-muted-foreground">میانگین / جیتر</p>
-                    <p className="ltr text-base font-black text-primary">
+                    <p className="ltr text-lg font-black text-primary">
                       {liveStats.avg !== null ? liveStats.avg : "—"}
                       <span className="ms-1 text-[9px] font-bold text-muted-foreground">
                         ±{liveStats.jitter ?? "—"}
                       </span>
                     </p>
                   </div>
-                  <div className="rounded-xl border border-border bg-background/60 p-2">
-                    <p className="text-[9px] text-muted-foreground">پکتِ دور ریخته</p>
+                  <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
+                    <p className="text-[9px] text-muted-foreground">پکت دور ریخته</p>
                     <p
-                      className={`text-base font-black ${
+                      className={`text-lg font-black ${
                         liveStats.loss && liveStats.loss > 5
                           ? "text-rose-500"
                           : liveStats.loss
@@ -704,7 +758,13 @@ export function Dashboard() {
                 </div>
                 <LiveChart samples={samples} />
                 <p className="mt-1.5 text-center text-[9px] text-muted-foreground">
-                  هر ۲ ثانیه یک پکت واقعی به سرور بازی —{" "}
+                  هر ۲ ثانیه یک پکت واقعی به سرور بازی{" "}
+                  {game?.tcpPorts.length ? (
+                    <span className="ltr">
+                      (پورت {game.tcpPorts.join("/")}، ۴۴۳)
+                    </span>
+                  ) : null}{" "}
+                  —{" "}
                   {pingQuality(liveStats.avg).label !== "—"
                     ? `کیفیت: ${pingQuality(liveStats.avg).label}`
                     : "در انتظار داده"}
@@ -715,28 +775,6 @@ export function Dashboard() {
                 اول یک سرور انتخاب یا تست کن تا پایش زنده روشن شود.
               </p>
             )}
-          </section>
-
-          {/* benefits */}
-          <section className="rounded-2xl border border-primary/20 bg-primary/[0.05] p-4">
-            <h2 className="mb-2.5 flex items-center gap-2 text-sm font-bold">
-              <Globe className="h-4 w-4 text-primary" />
-              مزایای STAG
-            </h2>
-            <ul className="space-y-2 text-xs leading-relaxed text-foreground/85">
-              {[
-                "پینگ واقعی برای بازی انتخابی — نه پینگ الکی",
-                "هر سرویس با هر دو DNS خودش کنار هم تست می‌شود",
-                "دکمه برق، DNS را واقعاً روی ویندوز وصل/قطع می‌کند",
-                "پایش زنده پینگ و پکت با نمودار لحظه‌ای",
-                "کاملاً آفلاین — تست از اینترنت خودت",
-              ].map((t) => (
-                <li key={t} className="flex items-start gap-2">
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                  {t}
-                </li>
-              ))}
-            </ul>
           </section>
         </div>
       </div>

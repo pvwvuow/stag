@@ -1,24 +1,29 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Server, Plus, Trash2, Search, ShieldAlert, Globe2 } from "lucide-react";
+import { Server, Plus, Trash2, Search, ShieldAlert, Globe2, Zap } from "lucide-react";
 import { useStag, DNS_CATALOG, MAX_SERVICES } from "@/components/stag-store";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { FlagCircle, SignalBars } from "@/components/views/dashboard";
-import { reachLabel } from "@/lib/dns-catalog";
+import { reachLabel, DNS_GROUPS, type DnsGroup } from "@/lib/dns-catalog";
 
-const REACH_BADGE = {
-  global: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  geo: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  "iran-only": "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+const REACH_PILL = {
+  global: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  geo: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  "iran-only": "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
 } as const;
+
+const GROUP_ICON: Record<DnsGroup, React.ReactNode> = {
+  "ir-gaming": <Zap className="h-3.5 w-3.5 text-primary" />,
+  "ir-general": <Globe2 className="h-3.5 w-3.5 text-primary" />,
+  global: <Globe2 className="h-3.5 w-3.5 text-primary" />,
+};
 
 /** Per-IP mini status inside a service row — the two DNS of one service sit side by side. */
 function IpChip({ ip, sweep }: { ip: string; sweep?: { ok: boolean; ms: number | null } }) {
   return (
-    <span className="flex items-center gap-2 rounded-xl border border-border bg-background/60 px-2.5 py-1.5">
+    <span className="flex items-center gap-2 rounded-full bg-muted/60 px-2.5 py-1">
       <span className="ltr font-mono text-[11px] text-foreground/90">{ip}</span>
       {sweep ? (
         sweep.ok ? (
@@ -44,7 +49,7 @@ function ServiceRow({ id }: { id: string }) {
   const canEnable = enabled || st.activeServices.length < MAX_SERVICES;
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
       <FlagCircle cc={entry.cc} />
       <div className="min-w-0 flex-1 basis-52">
         <div className="flex flex-wrap items-center gap-2">
@@ -52,16 +57,14 @@ function ServiceRow({ id }: { id: string }) {
             {entry.name}
           </p>
           <span className="ltr text-[11px] text-muted-foreground">{entry.latin}</span>
-          {entry && (
-            <Badge className={`border text-[10px] ${REACH_BADGE[entry.reach]}`}>
-              {reachLabel(entry.reach)}
-            </Badge>
-          )}
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${REACH_PILL[entry.reach]}`}>
+            {reachLabel(entry.reach)}
+          </span>
         </div>
         {entry.note && <p className="mt-0.5 text-[10px] text-muted-foreground/80">{entry.note}</p>}
       </div>
       {/* both DNS addresses of the service, side by side */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {entry.ips.map((ip) => (
           <IpChip key={ip} ip={ip} sweep={st.sweepResults[ip]} />
         ))}
@@ -82,7 +85,7 @@ function CustomRow({ ip }: { ip: string }) {
   const enabled = st.activeServices.includes(id);
   const canEnable = enabled || st.activeServices.length < MAX_SERVICES;
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
       <FlagCircle cc="ir" />
       <div className="min-w-0 flex-1 basis-52">
         <p className="ltr font-mono text-sm font-bold">{ip}</p>
@@ -97,7 +100,7 @@ function CustomRow({ ip }: { ip: string }) {
       />
       <button
         onClick={() => st.removeCustomServer(ip)}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500"
+        className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500"
         aria-label="حذف"
         title="حذف"
       >
@@ -113,15 +116,15 @@ export function Servers() {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
 
-  const filteredGroups = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const match = (id: string) =>
+    const match = (e: (typeof DNS_CATALOG)[number]) =>
       !q ||
-      id.includes(q) ||
-      DNS_CATALOG.find((e) => e.id === id)?.name.includes(query.trim()) ||
-      DNS_CATALOG.find((e) => e.id === id)?.latin.toLowerCase().includes(q) ||
-      DNS_CATALOG.find((e) => e.id === id)?.ips.some((ip) => ip.includes(q));
-    return DNS_CATALOG.filter((e) => match(e.id));
+      e.id.includes(q) ||
+      e.name.includes(query.trim()) ||
+      e.latin.toLowerCase().includes(q) ||
+      e.ips.some((ip) => ip.includes(q));
+    return DNS_CATALOG.filter(match);
   }, [query]);
 
   const filteredCustom = useMemo(() => {
@@ -159,13 +162,13 @@ export function Servers() {
             تست‌ها همزمان و موازی سنجیده می‌شود.
           </p>
         </div>
-        <Badge className="border border-primary/40 bg-primary/10 text-primary">
-          {st.activeServices.length}/{MAX_SERVICES} فعال
-        </Badge>
+        <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-black text-primary ltr">
+          {st.activeServices.length}/{MAX_SERVICES}
+        </span>
       </div>
 
       {/* add custom */}
-      <section className="rounded-2xl border border-border bg-card/70 p-4">
+      <section className="panel p-4">
         <h2 className="mb-2.5 text-sm font-bold">افزودن سرور دلخواه</h2>
         <div className="flex gap-2">
           <input
@@ -174,11 +177,11 @@ export function Servers() {
             onKeyDown={(e) => e.key === "Enter" && addCustom()}
             placeholder="مثلاً 192.168.1.1 یا آی‌پی DNS دلخواه"
             dir="ltr"
-            className="h-10 flex-1 rounded-xl border border-input bg-background/70 px-3 text-left font-mono text-sm outline-none placeholder:text-right placeholder:font-sans placeholder:text-muted-foreground/70 focus:border-primary/60"
+            className="h-10 flex-1 rounded-full border border-input bg-background/70 px-4 text-left font-mono text-sm outline-none placeholder:text-right placeholder:font-sans placeholder:text-muted-foreground/70 focus:border-primary/60"
           />
           <button
             onClick={addCustom}
-            className="flex h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
+            className="flex h-10 items-center gap-1.5 rounded-full bg-primary px-5 text-sm font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
           >
             <Plus className="h-4 w-4" />
             افزودن
@@ -192,52 +195,75 @@ export function Servers() {
 
       {/* search */}
       <div className="relative">
-        <Search className="absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="absolute end-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="جستجو بین سرویس‌ها و آی‌پی‌ها..."
-          className="h-10 w-full rounded-xl border border-input bg-background/70 pe-10 ps-3 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary/60"
+          className="h-10 w-full rounded-full border border-input bg-background/70 pe-11 ps-4 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary/60"
         />
       </div>
 
-      {/* catalog groups */}
-      {filteredGroups.map((e) => (
-        <ServiceRow key={e.id} id={e.id} />
-      ))}
+      {/* catalog — one organized panel per group, hairline-divided rows */}
+      {DNS_GROUPS.map((group) => {
+        const rows = filtered.filter((e) => e.group === group.id);
+        if (rows.length === 0) return null;
+        return (
+          <section key={group.id} className="panel overflow-hidden">
+            <div className="px-4 pb-1.5 pt-4">
+              <h2 className="flex items-center gap-1.5 text-sm font-bold">
+                {GROUP_ICON[group.id]}
+                {group.label}
+              </h2>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{group.hint}</p>
+            </div>
+            <div className="divide-y divide-border/50 px-1.5 pb-1.5">
+              {rows.map((e) => (
+                <ServiceRow key={e.id} id={e.id} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
 
       {/* custom servers */}
       {filteredCustom.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-bold text-muted-foreground">سرورهای دلخواه</h2>
-          {filteredCustom.map((ip) => (
-            <CustomRow key={ip} ip={ip} />
-          ))}
+        <section className="panel overflow-hidden">
+          <div className="px-4 pb-1.5 pt-4">
+            <h2 className="text-sm font-bold">سرورهای دلخواه</h2>
+          </div>
+          <div className="divide-y divide-border/50 px-1.5 pb-1.5">
+            {filteredCustom.map((ip) => (
+              <CustomRow key={ip} ip={ip} />
+            ))}
+          </div>
         </section>
       )}
 
-      {/* reachability legend */}
-      <section className="grid gap-2.5 pb-4 sm:grid-cols-3">
-        <div className="flex items-start gap-2 rounded-xl border border-border bg-card/60 p-3">
-          <Globe2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            <b className="text-foreground">قابل تست از همه‌جا</b> — این سرورها از هر اینترنتی پاسخ
-            میدهن و نتیجه‌شون کاملاً قابل اعتماده.
-          </p>
-        </div>
-        <div className="flex items-start gap-2 rounded-xl border border-border bg-card/60 p-3">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            <b className="text-foreground">مخصوص IP ایران</b> — معمولاً فقط به درخواست‌های داخل ایران
-            جواب میدن؛ از خارج «بدون پاسخ» طبیعیه.
-          </p>
-        </div>
-        <div className="flex items-start gap-2 rounded-xl border border-border bg-card/60 p-3">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            <b className="text-foreground">فقط داخل ایران</b> — آی‌پی داخلی دارن (10.x) و فقط از
-            شبکه‌های ایران قابل استفاده‌ان.
-          </p>
+      {/* reachability legend — one quiet strip */}
+      <section className="panel overflow-hidden pb-4">
+        <div className="grid gap-px bg-border/40 sm:grid-cols-3">
+          <div className="flex items-start gap-2 bg-card/80 p-3.5">
+            <Globe2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <b className="text-foreground">قابل تست از همه‌جا</b> — این سرورها از هر اینترنتی پاسخ
+              میدهن و نتیجه‌شون کاملاً قابل اعتماده.
+            </p>
+          </div>
+          <div className="flex items-start gap-2 bg-card/80 p-3.5">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <b className="text-foreground">مخصوص IP ایران</b> — معمولاً فقط به درخواست‌های داخل
+              ایران جواب میدن؛ از خارج «بدون پاسخ» طبیعیه.
+            </p>
+          </div>
+          <div className="flex items-start gap-2 bg-card/80 p-3.5">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <b className="text-foreground">فقط داخل ایران</b> — آی‌پی داخلی دارن (10.x) و فقط از
+              شبکه‌های ایران قابل استفاده‌ان.
+            </p>
+          </div>
         </div>
       </section>
     </div>

@@ -1,19 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings, Sun, Moon, Trash2, Monitor, Info } from "lucide-react";
+import {
+  Settings,
+  Sun,
+  Moon,
+  Trash2,
+  Monitor,
+  Info,
+  RefreshCw,
+  Download,
+  RotateCw,
+  PackageCheck,
+  ExternalLink,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
 import { useStag, MAX_SERVICES } from "@/components/stag-store";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 
 const THEME_KEY = "stag.theme";
+const RELEASES_URL = "https://github.com/pvwvuow/stag/releases/latest";
+
+function fmtBytes(n: number): string {
+  if (!n || n <= 0) return "—";
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 export function SettingsView() {
   const st = useStag();
   const { toast } = useToast();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isDesktop, setIsDesktop] = useState(false);
-  const [version, setVersion] = useState<string>("1.2.0");
+  const [version, setVersion] = useState<string>("1.3.0");
 
   useEffect(() => {
     setIsDesktop(!!window.electronAPI?.isDesktop);
@@ -37,6 +58,9 @@ export function SettingsView() {
     }
   };
 
+  const u = st.update;
+  const isPortable = u.status === "unsupported" && u.error === "portable";
+
   return (
     <div className="h-full min-h-0 space-y-5 overflow-y-auto p-5" dir="rtl">
       <div>
@@ -47,17 +71,119 @@ export function SettingsView() {
         <p className="mt-1 text-xs text-muted-foreground">شخصی‌سازی رفتار STAG — همه‌چیز همین‌جا ذخیره میشه.</p>
       </div>
 
+      {/* in-app updates */}
+      <section className="panel p-4">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-bold">
+          <PackageCheck className="h-4 w-4 text-primary" />
+          بروزرسانی برنامه
+        </h2>
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          آپدیت فقط بخش‌های تغییرکرده را دانلود می‌کند (نه کل برنامه) — بعد از دانلود، با یک
+          راه‌اندازی مجدد نصب می‌شود.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground">
+            نسخه فعلی: <span className="ltr font-mono text-foreground">{version}</span>
+          </span>
+
+          {u.status === "idle" && (
+            <button
+              onClick={st.checkForUpdates}
+              disabled={!isDesktop}
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90 disabled:opacity-40"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              بررسی بروزرسانی
+            </button>
+          )}
+
+          {u.status === "checking" && (
+            <span className="flex items-center gap-2 rounded-full bg-muted/70 px-4 py-2 text-xs font-bold text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              در حال بررسی...
+            </span>
+          )}
+
+          {u.status === "available" && (
+            <>
+              <span className="rounded-full bg-primary/10 px-3 py-1.5 text-[11px] font-black text-primary">
+                نسخه <span className="ltr font-mono">{u.version}</span> موجوده
+              </span>
+              <button
+                onClick={st.downloadUpdate}
+                className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
+              >
+                <Download className="h-3.5 w-3.5" />
+                دانلود آپدیت
+              </button>
+            </>
+          )}
+
+          {u.status === "downloading" && (
+            <div className="min-w-56 flex-1">
+              <div className="mb-1 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
+                <span>در حال دانلود... %{u.percent}</span>
+                <span className="ltr">
+                  {fmtBytes(u.transferred)} / {fmtBytes(u.total)} · {fmtBytes(u.bps)}/s
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${Math.max(3, u.percent)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {u.status === "ready" && (
+            <>
+              <span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                نسخه <span className="ltr font-mono">{u.version}</span> آماده نصبه
+              </span>
+              <button
+                onClick={st.installUpdate}
+                className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition-opacity hover:bg-emerald-600/90"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                نصب و راه‌اندازی مجدد
+              </button>
+            </>
+          )}
+
+          {(u.status === "error" || u.status === "unsupported") && (
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5" />
+              {isPortable
+                ? "نسخه پرتابل آپدیت خودکار نداره"
+                : "بروزرسانی خودکار فعلاً در دسترس نیست"}
+            </span>
+          )}
+        </div>
+
+        {(u.status === "error" || u.status === "unsupported" || u.status === "idle") && (
+          <button
+            onClick={() => window.electronAPI?.openExternal?.(RELEASES_URL)}
+            className="mt-3 flex items-center gap-1.5 text-[11px] font-bold text-primary hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+            دانلود دستی از صفحه Releases گیت‌هاب
+          </button>
+        )}
+      </section>
+
       {/* theme */}
-      <section className="rounded-2xl border border-border bg-card/70 p-4">
+      <section className="panel p-4">
         <h2 className="mb-3 text-sm font-bold">ظاهر برنامه</h2>
         <div className="grid grid-cols-2 gap-3 sm:max-w-md">
           <button
             onClick={() => applyTheme("light")}
-            className={`flex items-center gap-3 rounded-xl border p-3 text-start transition-colors ${
-              theme === "light" ? "border-primary bg-primary/[0.08]" : "border-border hover:bg-muted/50"
+            className={`flex items-center gap-3 rounded-[22px] p-3 text-start transition-colors ${
+              theme === "light" ? "bg-primary/[0.09] ring-2 ring-primary/70" : "bg-muted/50 hover:bg-muted/70"
             }`}
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-cyan-600 shadow-inner">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-cyan-600 shadow-inner">
               <Sun className="h-5 w-5" />
             </span>
             <span>
@@ -67,11 +193,11 @@ export function SettingsView() {
           </button>
           <button
             onClick={() => applyTheme("dark")}
-            className={`flex items-center gap-3 rounded-xl border p-3 text-start transition-colors ${
-              theme === "dark" ? "border-primary bg-primary/[0.08]" : "border-border hover:bg-muted/50"
+            className={`flex items-center gap-3 rounded-[22px] p-3 text-start transition-colors ${
+              theme === "dark" ? "bg-primary/[0.09] ring-2 ring-primary/70" : "bg-muted/50 hover:bg-muted/70"
             }`}
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-950 text-cyan-400">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-950 text-cyan-400">
               <Moon className="h-5 w-5" />
             </span>
             <span>
@@ -83,8 +209,8 @@ export function SettingsView() {
       </section>
 
       {/* test options */}
-      <section className="space-y-3 rounded-2xl border border-border bg-card/70 p-4">
-        <h2 className="text-sm font-bold">گزینه‌های تست</h2>
+      <section className="panel p-4">
+        <h2 className="mb-3 text-sm font-bold">گزینه‌های تست</h2>
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium">تست پورت‌های TCP بازی</p>
@@ -94,7 +220,7 @@ export function SettingsView() {
           </div>
           <Switch checked={st.tcpEnabled} onCheckedChange={st.setTcpEnabled} aria-label="تست TCP" />
         </div>
-        <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
+        <div className="mt-3 flex items-center justify-between gap-4 pt-3 hairline">
           <div>
             <p className="text-sm font-medium">سقف سرویس‌های فعال</p>
             <p className="text-[11px] text-muted-foreground">
@@ -106,7 +232,7 @@ export function SettingsView() {
       </section>
 
       {/* data */}
-      <section className="rounded-2xl border border-border bg-card/70 p-4">
+      <section className="panel p-4">
         <h2 className="mb-1 text-sm font-bold">داده‌ها</h2>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           لیست سرورها، بازی انتخابی و تنظیمات به‌صورت محلی ذخیره میشن. با پاک‌کردن، همه‌چیز به حالت
@@ -123,7 +249,7 @@ export function SettingsView() {
             }
             toast({ title: "پاک شد", description: "برای اعمال، برنامه را دوباره باز کن." });
           }}
-          className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-bold text-rose-600 transition-colors hover:bg-rose-500/20 dark:text-rose-400"
+          className="flex items-center gap-2 rounded-full bg-rose-500/10 px-4 py-2 text-sm font-bold text-rose-600 transition-colors hover:bg-rose-500/20 dark:text-rose-400"
         >
           <Trash2 className="h-4 w-4" />
           بازنشانی داده‌ها
@@ -131,7 +257,7 @@ export function SettingsView() {
       </section>
 
       {/* diagnostics */}
-      <section className="rounded-2xl border border-border bg-card/70 p-4">
+      <section className="panel p-4">
         <h2 className="mb-2 flex items-center gap-2 text-sm font-bold">
           <Monitor className="h-4 w-4 text-primary" />
           وضعیت اجرا
@@ -153,7 +279,7 @@ export function SettingsView() {
 
 function CountChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="ltr flex h-9 min-w-9 items-center justify-center rounded-xl bg-primary/10 px-2 font-mono text-sm font-black text-primary">
+    <span className="ltr flex h-9 min-w-9 items-center justify-center rounded-full bg-primary/10 px-2 font-mono text-sm font-black text-primary">
       {children}
     </span>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Home, Zap, Server, Settings, Info } from "lucide-react";
+import { Home, Zap, Server, Settings, Info, ArrowDownToLine } from "lucide-react";
 import { useStag, type ViewId } from "@/components/stag-store";
 import { StagLockup, StagMark } from "@/components/brand";
 import { WindowStrip } from "@/components/titlebar";
@@ -21,14 +21,19 @@ const NAV: Array<{ id: ViewId; label: string; icon: React.ReactNode }> = [
 
 function Sidebar() {
   const st = useStag();
-  const [version, setVersion] = useState("1.2.0");
+  const [version, setVersion] = useState("1.3.0");
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
   }, []);
 
+  const updateReady = st.update.status === "ready";
+  const updateAvailable = st.update.status === "available" || updateReady;
+
   return (
-    <nav className="flex h-full w-[232px] shrink-0 flex-col border-e border-border/70 bg-sidebar/80 backdrop-blur">
+    <nav className="relative flex h-full w-[232px] shrink-0 flex-col bg-sidebar/80 backdrop-blur">
+      {/* soft separator to the main area */}
+      <span className="hairline-v absolute end-0 top-0 h-full" aria-hidden />
       {/* brand — drag region */}
       <div className="app-drag flex h-[72px] select-none items-center px-5">
         <StagLockup />
@@ -67,6 +72,18 @@ function Sidebar() {
 
       {/* footer */}
       <div className="mt-auto space-y-3 p-5">
+        {updateAvailable && (
+          <button
+            onClick={() => st.setView("settings")}
+            className="flex w-full items-center gap-2 rounded-full bg-primary/10 px-3.5 py-2.5 text-start text-[11px] font-bold text-primary transition-colors hover:bg-primary/20"
+            title="بروزرسانی جدید — به تنظیمات برو"
+          >
+            <ArrowDownToLine className={`h-4 w-4 shrink-0 ${updateReady ? "animate-bounce" : ""}`} />
+            <span className="min-w-0 flex-1 truncate">
+              {updateReady ? "آماده نصب — کلیک کن" : `نسخه ${st.update.version} موجوزه`}
+            </span>
+          </button>
+        )}
         <div className="flex items-start gap-2.5" dir="rtl">
           <StagMark className="h-7 w-7 shrink-0" />
           <div>

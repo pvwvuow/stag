@@ -164,6 +164,36 @@
 }
 
 /* ---------------------------------------------
+   STAG flat panel language — simple, organized,
+   no boxy rectangles: borderless soft surfaces,
+   hairline separators, pill chips.
+   --------------------------------------------- */
+.panel {
+  background: color-mix(in oklab, var(--card) 74%, transparent);
+  border-radius: 28px;
+  backdrop-filter: blur(8px);
+}
+.panel-strong {
+  background: var(--card);
+  border-radius: 28px;
+}
+.panel-tint {
+  background: color-mix(in oklab, var(--primary) 7%, transparent);
+  border-radius: 28px;
+}
+.hairline {
+  height: 1px;
+  background: var(--border);
+  opacity: 0.55;
+}
+.hairline-v {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------
    STAG brand pieces
    --------------------------------------------- */
 

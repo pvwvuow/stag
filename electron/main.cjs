@@ -12,7 +12,7 @@
  * (drag region + min/max/close via IPC). See src/components/titlebar.tsx.
  */
 
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
@@ -41,6 +41,7 @@ if (!gotLock) {
 
 function bootstrap() {
   registerIpc();
+  initUpdater();
 
   app.on("second-instance", () => {
     if (win) {
@@ -230,6 +231,162 @@ function registerIpc() {
   ipcMain.on("window:close", () => win?.close());
   ipcMain.handle("window:is-maximized", () => (win ? win.isMaximized() : false));
   ipcMain.handle("app:get-version", () => app.getVersion());
+  ipcMain.on("app:open-url", (_e, url) => {
+    if (typeof url === "string" && /^https:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+}
+
+/* ---------------------------- updater ------------------------------ */
+/**
+ * In-app updates via electron-updater (GitHub releases).
+ * - Differential downloads: the NSIS installer ships a .blockmap asset, so
+ *   after this version only the CHANGED blocks of the installer are fetched
+ *   (the old release must have its own .blockmap published too).
+ * - Nothing downloads silently: the renderer shows what is happening and the
+ *   user decides when to download and when to restart & install.
+ * - Portable builds cannot self-install -> UI falls back to a download link.
+ * - If the GitHub repo is private the anonymous check 404s; we surface a
+ *   friendly state and the renderer offers the manual releases link.
+ */
+
+const UPDATE_STATE = {
+  status: "idle", // idle | checking | available | downloading | ready | error | unsupported
+  version: null,
+  releaseNotes: null,
+  percent: 0,
+  transferred: 0,
+  total: 0,
+  bps: 0,
+  error: null,
+};
+let autoUpdaterRef = null;
+
+function pushUpdate(patch) {
+  Object.assign(UPDATE_STATE, patch);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("update:event", { ...UPDATE_STATE });
+  }
+}
+
+function loadUpdater() {
+  if (autoUpdaterRef) return autoUpdaterRef;
+  // Packaged: copied by electron-builder extraResources (asar ignores
+  // node_modules dirs inside "files"). Dev: the same layout under electron/.
+  const candidates = [
+    path.join(process.resourcesPath ?? "", "stag-updater", "node_modules", "electron-updater"),
+    path.join(__dirname, "vendor", "node_modules", "electron-updater"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) {
+        autoUpdaterRef = require(candidate);
+        break;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  if (!autoUpdaterRef) {
+    try {
+      autoUpdaterRef = require("electron-updater");
+    } catch (err) {
+      console.warn("[stag] electron-updater unavailable:", err.message);
+    }
+  }
+  return autoUpdaterRef;
+}
+
+function initUpdater() {
+  if (IS_DEV || SMOKE_TEST) return;
+
+  // Portable exe cannot self-replace -> offer manual download instead.
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    UPDATE_STATE.status = "unsupported";
+    UPDATE_STATE.error = "portable";
+    return;
+  }
+
+  const updater = loadUpdater();
+  if (!updater) return;
+  const { autoUpdater } = updater;
+
+  autoUpdater.autoDownload = false; // user decides in the UI
+  autoUpdater.autoInstallOnAppQuit = true; // downloaded update installs on next restart
+
+  autoUpdater.on("checking-for-update", () => {
+    pushUpdate({ status: "checking", error: null });
+  });
+  autoUpdater.on("update-available", (info) => {
+    pushUpdate({
+      status: "available",
+      version: info.version ?? null,
+      releaseNotes:
+        typeof info.releaseNotes === "string"
+          ? info.releaseNotes.slice(0, 4000)
+          : null,
+      percent: 0,
+      error: null,
+    });
+  });
+  autoUpdater.on("update-not-available", () => {
+    pushUpdate({ status: "idle", version: null, percent: 0, error: null });
+  });
+  autoUpdater.on("download-progress", (p) => {
+    pushUpdate({
+      status: "downloading",
+      percent: Math.round(p.percent ?? 0),
+      transferred: p.transferred ?? 0,
+      total: p.total ?? 0,
+      bps: p.bytesPerSecond ?? 0,
+    });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    pushUpdate({ status: "ready", version: info.version ?? UPDATE_STATE.version, percent: 100 });
+  });
+  autoUpdater.on("error", (err) => {
+    const msg = String((err && err.message) || err || "");
+    // Private repo / no network -> keep it quiet-ish, renderer shows fallback.
+    pushUpdate({ status: "error", error: msg.slice(0, 300) });
+  });
+
+  ipcMain.handle("update:get-state", () => ({ ...UPDATE_STATE }));
+  ipcMain.handle("update:check", async () => {
+    try {
+      await autoUpdater.checkForUpdates();
+      return { ...UPDATE_STATE };
+    } catch (err) {
+      const msg = String((err && err.message) || err || "");
+      pushUpdate({ status: "error", error: msg.slice(0, 300) });
+      return { ...UPDATE_STATE };
+    }
+  });
+  ipcMain.handle("update:download", async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { ...UPDATE_STATE };
+    } catch (err) {
+      const msg = String((err && err.message) || err || "");
+      pushUpdate({ status: "error", error: msg.slice(0, 300) });
+      return { ...UPDATE_STATE };
+    }
+  });
+  ipcMain.on("update:install", () => {
+    quitting = true;
+    killNextServer();
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      console.error("[stag] quitAndInstall failed:", err);
+      app.quit();
+    }
+  });
+
+  // Silent check shortly after launch — never blocks, never auto-downloads.
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 6000);
 }
 
 /* --------------------------- smoke test ---------------------------- */
