@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>STAG — خطای موتور داخلی</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #0e2229 0%, #070b0e 55%);
+    color: #e7f6f9;
+    display: flex; align-items: center; justify-content: center;
+    padding: 32px;
+  }
+  .card {
+    width: min(560px, 100%);
+    text-align: center;
+    padding: 40px 36px;
+    border-radius: 24px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(34,211,238,0.14);
+  }
+  .logo {
+    width: 72px; height: 72px; margin: 0 auto 18px;
+    display: grid; place-items: center;
+    border-radius: 22px;
+    background: linear-gradient(140deg, rgba(34,211,238,0.25), rgba(34,211,238,0.06));
+    border: 1px solid rgba(34,211,238,0.35);
+    font-size: 34px;
+  }
+  h1 { font-size: 20px; font-weight: 800; margin-bottom: 10px; color: #67e8f9; }
+  p { font-size: 14px; line-height: 2; color: #b8d3d9; margin-bottom: 6px; }
+  .hint { font-size: 12px; color: #7fa3ab; margin-top: 14px; }
+  button {
+    margin-top: 22px;
+    padding: 12px 34px;
+    font-family: inherit; font-size: 14px; font-weight: 700;
+    color: #04252b; background: #22d3ee;
+    border: 0; border-radius: 999px; cursor: pointer;
+  }
+  button:hover { background: #4be0f5; }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  .status { margin-top: 14px; font-size: 12px; min-height: 18px; }
+  .status.err { color: #fda4af; }
+  .status.ok { color: #6ee7b7; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🎮</div>
+    <h1>موتور داخلی STAG بالا نیامد</h1>
+    <p id="msg">سرور داخلی برنامه چند بار تلاش کرد ولی پاسخ نداد. معمولاً با یک تلاش مجدد درست می‌شود.</p>
+    <button id="retry">تلاش مجدد</button>
+    <div class="status" id="status"></div>
+    <p class="hint">اگر مشکل ادامه پیدا کرد، از صفحه «درباره» لاگ برنامه را کپی کن و گزارش بده.</p>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var reason = params.get("reason") || "boot";
+      var msg = document.getElementById("msg");
+      if (reason === "boot") {
+        msg.textContent = "سرور داخلی برنامه در شروع کار پاسخ نداد. معمولاً با یک تلاش مجدد درست می‌شود.";
+      } else if (reason === "restart") {
+        msg.textContent = "سرور داخلی برنامه چند بار ری‌استارت شد ولی بالا نیامد. یک تلاش مجدد انجام بده.";
+      } else if (reason === "died") {
+        msg.textContent = "سرور داخلی برنامه چند بار متوالی کرش کرد. تلاش مجدد کن؛ اگر تکرار شد لاگ را برای پشتیبانی بفرست.";
+      }
+      var btn = document.getElementById("retry");
+      var status = document.getElementById("status");
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        status.className = "status";
+        status.textContent = "در حال راه‌اندازی مجدد موتور…";
+        try {
+          window.electronAPI.retryServer().then(function (r) {
+            if (r && r.ok) {
+              status.className = "status ok";
+              status.textContent = "موتور بالا آمد — در حال بازگشت…";
+            } else {
+              status.className = "status err";
+              status.textContent = "اجرا نشد: " + ((r && r.error) || "خطای نامشخص");
+              btn.disabled = false;
+            }
+          }).catch(function (e) {
+            status.className = "status err";
+            status.textContent = "اجرا نشد: " + e;
+            btn.disabled = false;
+          });
+        } catch (e) {
+          status.className = "status err";
+          status.textContent = "پل ارتباطی در دسترس نیست — برنامه را ببند و دوباره باز کن.";
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -2,20 +2,16 @@
 
 import { CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
 import type { ApiResult } from "@/components/stag-store";
+import { verdictOf as verdictFromSummary, TONE_BADGE, isPrivateIp, type Tone } from "@/lib/verdict";
 
-/* Iran-internal / private-range IPs can never be tested from an external server. */
-export function isPrivateIp(ip: string): boolean {
-  const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    if (a === 10 || a === 127) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    return false;
-  }
-  const v6 = ip.toLowerCase();
-  return v6.startsWith("fc") || v6.startsWith("fd") || v6 === "::1";
+// Single source of truth: verdict logic lives in src/lib/verdict.ts so unit
+// tests can exercise it without React (فاز ۷.۳). This wrapper accepts the
+// full API result (the historical call signature) and re-exports the rest.
+export { TONE_BADGE, isPrivateIp };
+export type { Tone };
+
+export function verdictOf(res: ApiResult): { tone: Tone; label: string } {
+  return verdictFromSummary(res.summary);
 }
 
 export function latencyClass(ms: number | null): string {
@@ -23,66 +19,6 @@ export function latencyClass(ms: number | null): string {
   if (ms < 120) return "text-emerald-600 dark:text-emerald-400";
   if (ms < 350) return "text-amber-600 dark:text-amber-400";
   return "text-rose-600 dark:text-rose-400";
-}
-
-export type Tone = "ok" | "partial" | "dead" | "misleading" | "unknown";
-
-export const TONE_BADGE: Record<Tone, string> = {
-  ok: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40",
-  partial: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40",
-  // "misleading" (resolves but game server unreachable) is the WORST case — it
-  // fakes a connection — so it gets the strongest (rose) treatment.
-  misleading: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/50",
-  dead: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40",
-  unknown: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/40",
-};
-
-/**
- * Multi-dimensional verdict. It judges only the CRITICAL (auth + core game)
- * domains that the API already isolates in `summary`, and — crucially — it uses
- * REACHABILITY (TCP handshake / non-private IP), not mere DNS resolution:
- *
- *  - A domain that resolves but whose game server can't be reached (`misleading`)
- *    must NOT show green. A resolvable-but-unreachable login is worse than a
- *    plain failure because it fakes "it's connected" while the game never starts.
- *  - Ranking/labels therefore key off `reachable`, and any misleading critical
- *    domain forces a red "resolve می‌شه ولی به سرور بازی نمی‌رسه" verdict.
- *
- * Falls back gracefully for older API responses that lack the new fields.
- */
-export function verdictOf(res: ApiResult): { tone: Tone; label: string } {
-  const s = res.summary;
-  // Reachability is authoritative when present; otherwise fall back to resolved.
-  const reachable = typeof s.reachable === "number" ? s.reachable : s.resolved;
-  const misleading = typeof s.misleading === "number" ? s.misleading : 0;
-
-  let tone: Tone;
-  if (s.total === 0) {
-    tone = "unknown";
-  } else if (reachable === 0 && misleading > 0) {
-    // Everything that resolved is actually unreachable → a fake "connected".
-    tone = "misleading";
-  } else if (reachable === 0) {
-    tone = "dead";
-  } else if (reachable === s.total) {
-    tone = "ok";
-  } else {
-    // Some critical servers reachable, some not. If the gap is caused by
-    // misleading (resolve-without-reach) domains, flag it explicitly.
-    tone = misleading > 0 ? "misleading" : "partial";
-  }
-
-  const label =
-    tone === "ok"
-      ? "DNS کار میکنه"
-      : tone === "dead"
-        ? "DNS جواب نمیده"
-        : tone === "misleading"
-          ? "resolve می‌شه ولی به سرور بازی نمی‌رسه"
-          : tone === "partial"
-            ? "ناقص جواب میده"
-            : "قضاوت ممکن نبود";
-  return { tone, label };
 }
 
 export function statusIcon(status: string, neutral = false) {

@@ -12,6 +12,8 @@ import {
   Info,
   Swords,
   ChevronDown,
+  FileDown,
+  FileJson,
 } from "lucide-react";
 import { useStag, GAME_PRESETS, getPreset, type ApiResult, type ServiceMeta } from "@/components/stag-store";
 import { GameGlyph } from "@/components/brand";
@@ -25,6 +27,7 @@ import {
   type Tone,
 } from "@/components/ui-helpers";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
+import { APP_VERSION } from "@/lib/version";
 import { FlagCircle } from "@/components/views/dashboard";
 
 /* --------------------------- game grid --------------------------- */
@@ -117,7 +120,7 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
             مسیر اختصاصی
           </span>
         ) : null}
-        <span className={`ltr ms-auto font-mono text-[11px] ${latencyClass(r.latencyMs)}`}>
+        <span className={`ltr ms-auto font-mono text-[11px] ${latencyClass(r.latencyMs)}`} title="زمان کوئری DNS برای این دامنه (میلی‌ثانیه)">
           {r.latencyMs !== null ? `${r.latencyMs}ms` : ""}
         </span>
       </div>
@@ -192,7 +195,7 @@ function IpResultCard({
             {s.reachable ?? s.resolved}/{s.total} سرور حیاتی
           </span>
           {s.avgLatency !== null && (
-            <span className="ltr flex items-center gap-1 font-mono">
+            <span className="ltr flex items-center gap-1 font-mono" title="میانگین زمان کوئری DNS روی دامنه‌های این تست (میلی‌ثانیه)">
               <Timer className="h-3 w-3" />
               {s.avgLatency}ms
             </span>
@@ -212,6 +215,26 @@ function IpResultCard({
       )}
     </div>
   );
+}
+
+/* ------------------------------ export ------------------------------ */
+/**
+ * فاز ۸ — export the full-test results as CSV / JSON (client-side, no server
+ * round-trip). CSV is Excel-friendly (BOM + comma), JSON keeps the raw shape.
+ */
+function downloadFile(name: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function csvEscape(v: string | number | boolean | null): string {
+  const s = String(v ?? "");
+  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /* ------------------------------ view ------------------------------ */
@@ -273,6 +296,76 @@ export function Optimize() {
       .map((r) => score(r));
     const base = meta?.custom ? 9000 : 0;
     return best.length ? Math.min(...best) + base : 99999;
+  };
+
+  const hasResults = st.fullTest.order.some((o) => st.fullTest.results[o.ip]);
+
+  const exportRows = () => {
+    const metaOf = (sid: string) => st.metaFor(sid);
+    return st.fullTest.order
+      .map(({ ip, sid }) => ({ ip, sid, res: st.fullTest.results[ip], meta: metaOf(sid) }))
+      .filter((e) => e.res);
+  };
+
+  const exportCsv = () => {
+    const gameName = getPreset(st.fullTest.gameId)?.name ?? "";
+    const head = ["service", "dns_ip", "verdict", "critical_total", "resolved", "reachable", "misleading", "avg_dns_ms", "domain", "domain_critical", "domain_status", "domain_ms", "ips", "tcp"];
+    const lines = [head.join(",")];
+    for (const e of exportRows()) {
+      const { label } = verdictOf(e.res!);
+      const s = e.res!.summary;
+      if (e.res!.results.length === 0) {
+        lines.push([csvEscape(e.meta?.name ?? e.sid), e.ip, csvEscape(label), s.total, s.resolved, s.reachable ?? "", s.misleading ?? "", s.avgLatency ?? "", "", "", "", "", "", ""].join(","));
+      }
+      for (const r of e.res!.results) {
+        lines.push(
+          [
+            csvEscape(e.meta?.name ?? e.sid),
+            e.ip,
+            csvEscape(label),
+            s.total,
+            s.resolved,
+            s.reachable ?? "",
+            s.misleading ?? "",
+            s.avgLatency ?? "",
+            r.domain,
+            r.critical,
+            r.status,
+            r.latencyMs ?? "",
+            csvEscape(r.ips.join(" | ")),
+            csvEscape(r.tcp.map((t) => `${t.port}:${t.ok ? "ok" : "fail"}`).join(" | ")),
+          ].join(","),
+        );
+      }
+    }
+    // BOM so Excel opens UTF-8 correctly
+    downloadFile(
+      `stag-${gameName || "test"}-results.csv`,
+      "\uFEFF" + lines.join("\n"),
+      "text/csv;charset=utf-8",
+    );
+  };
+
+  const exportJson = () => {
+    const game = getPreset(st.fullTest.gameId);
+    const payload = {
+      app: "STAG",
+      version: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      game: game ? { id: game.id, name: game.name, domains: game.domains, tcpPorts: game.tcpPorts } : null,
+      results: exportRows().map((e) => ({
+        service: e.meta?.name ?? e.sid,
+        dnsIp: e.ip,
+        verdict: verdictOf(e.res!).label,
+        summary: e.res!.summary,
+        domains: e.res!.results,
+      })),
+    };
+    downloadFile(
+      `stag-${game?.name || "test"}-results.json`,
+      JSON.stringify(payload, null, 2),
+      "application/json",
+    );
   };
 
   return (
@@ -362,9 +455,31 @@ export function Optimize() {
       {/* results — grouped by service: name on top, its DNS IPs below side by side */}
       {st.fullTest.order.length > 0 && (
         <section className="space-y-4">
-          <h2 className="text-sm font-bold text-muted-foreground">
-            نتایج (مرتب‌شده از بهترین — هر سرویس با آی‌پی‌های خودش)
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-muted-foreground">
+              نتایج (مرتب‌شده از بهترین — هر سرویس با آی‌پی‌های خودش)
+            </h2>
+            {hasResults && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={exportCsv}
+                  className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3.5 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
+                  title="خروجی نتایج برای اکسل"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  خروجی CSV
+                </button>
+                <button
+                  onClick={exportJson}
+                  className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3.5 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
+                  title="خروجی کامل نتایج به‌صورت JSON"
+                >
+                  <FileJson className="h-3.5 w-3.5" />
+                  خروجی JSON
+                </button>
+              </div>
+            )}
+          </div>
           {[...groups]
             .sort((a, b) => groupRank(a.meta, a.ips) - groupRank(b.meta, b.ips))
             .map(({ meta, ips }) => {

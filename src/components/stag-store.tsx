@@ -11,6 +11,7 @@ import {
 } from "react";
 import { GAME_PRESETS, getPreset, domainHosts, criticalHosts, primaryProbeHost } from "@/lib/games";
 import { DNS_CATALOG, type DnsGroup, type Reachability } from "@/lib/dns-catalog";
+import { apiFetch } from "@/lib/api-client";
 import { useToast } from "@/hooks/use-toast";
 
 /* ------------------------------ types ------------------------------ */
@@ -276,6 +277,8 @@ interface StagContextValue extends StagState {
   /* system DNS */
   dnsSys: SystemDnsState;
   dnsAction: null | "apply" | "off" | "flush";
+  /** kill-switch watch: current system DNS stopped resolving (health check) */
+  dnsUnhealthy: boolean;
   sysMatch: ServiceMeta | null; // catalog match for the ACTIVE system DNS (null => manual)
   refreshDns: () => Promise<void>;
   connectDns: (serviceId?: string) => Promise<void>;
@@ -313,6 +316,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     on: false,
   });
   const [dnsAction, setDnsAction] = useState<null | "apply" | "off" | "flush">(null);
+  /** فاز ۸ — health-check kill-switch: current DNS stopped answering. */
+  const [dnsUnhealthy, setDnsUnhealthy] = useState(false);
   const [update, setUpdate] = useState<UpdateState>({
     status: "idle",
     version: null,
@@ -431,6 +436,18 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
   /* ------------------------- ping sweep -------------------------- */
 
+  // ۵.۴ — in-flight requests are aborted when a new run starts or the app
+  // unmounts, so stale results can never land after the user changed games/
+  // services or navigated away.
+  const sweepCtl = useRef<AbortController | null>(null);
+  const fullCtl = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      sweepCtl.current?.abort();
+      fullCtl.current?.abort();
+    };
+  }, []);
+
   const runSweep = useCallback(() => {
     if (sweeping) return;
     const metas = state.activeServices
@@ -444,6 +461,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     // Probe the REAL game/auth server (critical domain), never the marketing
     // website — so the latency reflects the path that matters for playing.
     const domain = game ? primaryProbeHost(game) : undefined;
+    sweepCtl.current?.abort();
+    const ctl = new AbortController();
+    sweepCtl.current = ctl;
     setSweeping(true);
     setSweepResults({});
 
@@ -451,6 +471,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     let done = 0;
     const collected: Record<string, SweepResult> = {};
     const apply = (ip: string, r: SweepResult) => {
+      if (ctl.signal.aborted) return;
       collected[ip] = r;
       done += 1;
       setSweepResults({ ...collected });
@@ -497,9 +518,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     };
 
     jobs.forEach(({ ip }) => {
-      fetch("/api/ping", {
+      apiFetch("/api/ping", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        signal: ctl.signal,
         body: JSON.stringify({
           server: ip,
           domain,
@@ -530,7 +551,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
               privateIp: !!d.privateIp,
             }),
         )
-        .catch(() =>
+        .catch(() => {
+          if (ctl.signal.aborted) return;
           apply(ip, {
             ok: false,
             ms: null,
@@ -540,8 +562,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             tcpOk: null,
             viaPort: null,
             privateIp: false,
-          }),
-        );
+          });
+        });
     });
   }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, toast]);
 
@@ -562,12 +584,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const order = metas.flatMap((m) => m.ips.map((ip) => ({ ip, sid: m.id })));
+    fullCtl.current?.abort();
+    const ctl = new AbortController();
+    fullCtl.current = ctl;
     setFullTest({ gameId: game.id, inProgress: true, order, results: {} });
 
     order.forEach(({ ip }) => {
-      fetch("/api/dns", {
+      apiFetch("/api/dns", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        signal: ctl.signal,
         body: JSON.stringify({
           dns: ip,
           domains: domainHosts(game),
@@ -577,15 +602,17 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       })
         .then((r) => r.json())
         .then((d: ApiResult & { error?: string }) => {
+          if (ctl.signal.aborted) return;
           setFullTest((f) => {
             if (!f.inProgress || d.error) return f;
             return { ...f, results: { ...f.results, [ip]: d } };
           });
         })
         .catch(() => {
-          /* handled below */
+          /* aborted or network error — the finally below fills a stub */
         })
         .finally(() => {
+          if (ctl.signal.aborted) return;
           setFullTest((f) => {
             const results = { ...f.results };
             if (!results[ip]) {
@@ -633,7 +660,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
   const refreshDns = useCallback(async () => {
     try {
-      const r = await fetch("/api/system-dns");
+      const r = await apiFetch("/api/system-dns");
       const d = (await r.json()) as {
         ok?: boolean;
         supported?: boolean;
@@ -706,7 +733,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
   /** Read the adapter's CURRENT DNS servers straight from the core (3.1). */
   const fetchSystemServers = useCallback(async (): Promise<string[]> => {
     try {
-      const r = await fetch("/api/system-dns");
+      const r = await apiFetch("/api/system-dns");
       const d = (await r.json()) as { ok?: boolean; primary?: SysInterface | null };
       return d.ok && d.primary?.servers ? d.primary.servers : [];
     } catch {
@@ -743,9 +770,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       }
       setDnsAction("apply");
       try {
-        const r = await fetch("/api/system-dns", {
+        const r = await apiFetch("/api/system-dns", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "apply", ips: meta.ips }),
         });
         const d = (await r.json()) as { ok?: boolean; error?: string };
@@ -763,9 +789,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           // servers so the probe resolves through the NEW DNS, not a stale one (3.1).
           try {
             const sysServers = await fetchSystemServers();
-            const c = await fetch("/api/ping", {
+            const c = await apiFetch("/api/ping", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
             }).then((x) => x.json());
             if (c?.ok) {
@@ -812,9 +837,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     }
     setDnsAction("off");
     try {
-      const r = await fetch("/api/system-dns", {
+      const r = await apiFetch("/api/system-dns", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "off" }),
       });
       const d = (await r.json()) as { ok?: boolean; error?: string; restored?: "dhcp" | "static" };
@@ -834,9 +858,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         // system DNS (freshly read) instead of just showing a toast blindly.
         try {
           const sysServers = await fetchSystemServers();
-          const c = (await fetch("/api/ping", {
+          const c = (await apiFetch("/api/ping", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
           }).then((x) => x.json())) as { ok?: boolean; ms?: number | null };
           if (c?.ok) {
@@ -872,9 +895,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
   const flushDns = useCallback(async () => {
     setDnsAction("flush");
     try {
-      const r = await fetch("/api/system-dns", {
+      const r = await apiFetch("/api/system-dns", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "flush" }),
       });
       const d = (await r.json()) as { ok?: boolean; error?: string };
@@ -895,9 +917,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
   const checkConnection = useCallback(async () => {
     try {
       const sysServers = dnsSys.primary?.servers ?? [];
-      const d = (await fetch("/api/ping", {
+      const d = (await apiFetch("/api/ping", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
       }).then((x) => x.json())) as { ok?: boolean; ms?: number | null; domain?: string };
       if (d?.ok) {
@@ -916,6 +937,73 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
     }
   }, [dnsSys.primary, toast]);
+
+  /* ------------------ kill-switch health watch (فاز ۸) ------------------ */
+  /**
+   * While a STAG-chosen DNS is applied, watch it: every 45s probe the current
+   * system resolver. Three consecutive failures => the chosen DNS stopped
+   * working (service down / IP changed / ISP blocked it) — surface a loud
+   * warning + a one-click "turn off" instead of leaving the user offline
+   * silently. Reverting itself needs UAC, so we notify rather than act.
+   */
+  const healthFailRef = useRef(0);
+  const healthBusyRef = useRef(false);
+  useEffect(() => {
+    if (!dnsSys.on || dnsAction !== null) {
+      healthFailRef.current = 0;
+      setDnsUnhealthy(false);
+      return;
+    }
+    let alive = true;
+    const probe = async () => {
+      if (healthBusyRef.current || document.hidden) return;
+      healthBusyRef.current = true;
+      try {
+        const sysServers = (dnsSys.primary?.servers ?? []).join(",");
+        const d = (await apiFetch("/api/ping", {
+          method: "POST",
+          body: JSON.stringify({
+            server: "system",
+            tcp: false,
+            systemServers: sysServers ? sysServers.split(",") : [],
+          }),
+        }).then((x) => x.json())) as { ok?: boolean };
+        if (!alive) return;
+        if (d?.ok) {
+          if (healthFailRef.current >= 3) {
+            // recovered while we were already warning
+            toast({ title: "اتصال برگشت", description: "DNS فعلی دوباره جواب می‌دهد." });
+          }
+          healthFailRef.current = 0;
+          setDnsUnhealthy(false);
+        } else {
+          healthFailRef.current += 1;
+          if (healthFailRef.current === 3) {
+            setDnsUnhealthy(true);
+            toast({
+              title: "DNS فعلی جواب نمی‌دهد",
+              description: "۳ بار پشت‌سرهم پاسخی نرسید — DNS دیگری امتحان کن یا خاموشش کن.",
+              variant: "destructive",
+            });
+          }
+        }
+      } catch {
+        if (alive) {
+          healthFailRef.current += 1;
+          if (healthFailRef.current === 3) setDnsUnhealthy(true);
+        }
+      } finally {
+        healthBusyRef.current = false;
+      }
+    };
+    const iv = setInterval(probe, 45000);
+    const kickoff = setTimeout(probe, 8000);
+    return () => {
+      alive = false;
+      clearInterval(iv);
+      clearTimeout(kickoff);
+    };
+  }, [dnsSys.on, dnsSys.primary, dnsAction, toast]);
 
   /* ----------------------- in-app updates ------------------------ */
 
@@ -990,6 +1078,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     runFullTest,
     dnsSys,
     dnsAction,
+    dnsUnhealthy,
     sysMatch,
     refreshDns,
     connectDns,

@@ -1,37 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resolver } from "node:dns/promises";
 import net from "node:net";
+import { DNS_TUNING, BASELINE_DOH_ENDPOINTS, BASELINE_UDP_PRIMARY, BASELINE_UDP_SECONDARY, clamp } from "@/lib/config";
+import { localGuard } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-/* ------------------------------- tuning ------------------------------- */
-// Fixed ceilings; the effective per-query timeout is client-tunable within
-// [MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS] (Phase 2.6 — adapt to Iran's
-// jittery links without letting a caller hang the worker).
-const DEFAULT_QUERY_TIMEOUT_MS = 4000;
-const MIN_QUERY_TIMEOUT_MS = 1500;
-const MAX_QUERY_TIMEOUT_MS = 8000;
-const DEFAULT_TCP_TIMEOUT_MS = 4000;
-const MIN_TCP_TIMEOUT_MS = 1500;
-const MAX_TCP_TIMEOUT_MS = 8000;
-const HARD_TIMEOUT_PAD_MS = 2500; // hard race cap = query timeout + pad
-const MAX_DOMAINS = 8;
-const MAX_TCP_PORTS = 4;
-const DNS_CONCURRENCY = 4; // parallel domain queries through the user's DNS (2.4)
-const BASELINE_TTL_MS = 60_000; // baseline answers are cached this long (2.4)
+// Shared tuning lives in src/lib/config.ts (فاز ۵.۵ — single source).
+const DEFAULT_QUERY_TIMEOUT_MS = DNS_TUNING.defaultQueryMs;
+const MIN_QUERY_TIMEOUT_MS = DNS_TUNING.minQueryMs;
+const MAX_QUERY_TIMEOUT_MS = DNS_TUNING.maxQueryMs;
+const DEFAULT_TCP_TIMEOUT_MS = DNS_TUNING.defaultTcpMs;
+const MIN_TCP_TIMEOUT_MS = DNS_TUNING.minTcpMs;
+const MAX_TCP_TIMEOUT_MS = DNS_TUNING.maxTcpMs;
+const HARD_TIMEOUT_PAD_MS = DNS_TUNING.hardPadMs;
+const MAX_DOMAINS = DNS_TUNING.maxDomains;
+const MAX_TCP_PORTS = DNS_TUNING.maxTcpPorts;
+const DNS_CONCURRENCY = DNS_TUNING.concurrency; // parallel domain queries through the user's DNS (2.4)
+const BASELINE_TTL_MS = DNS_TUNING.baselineTtlMs;
 
 // Public UDP baselines used as a fallback when DoH is unavailable.
-const BASELINE_DNS = "8.8.8.8";
-const BASELINE_DNS_2 = "1.1.1.1";
-// DoH endpoints (2.1). In Iran, 8.8.8.8 / 1.1.1.1 over plain UDP are frequently
-// poisoned/redirected, so a UDP baseline can itself be tainted and produce a
-// FALSE "custom routing" verdict. Encrypted DoH is far harder to tamper with,
-// so it is the PRIMARY source of truth; UDP is only the fallback.
-const DOH_ENDPOINTS = [
-  "https://dns.google/resolve",
-  "https://cloudflare-dns.com/dns-query",
-];
+const BASELINE_DNS = BASELINE_UDP_PRIMARY;
+const BASELINE_DNS_2 = BASELINE_UDP_SECONDARY;
+// Encrypted DoH baselines (2.1) — far harder to tamper with inside Iran than
+// plain UDP, so they are the PRIMARY source of truth; UDP is only the fallback.
+const DOH_ENDPOINTS = [...BASELINE_DOH_ENDPOINTS];
 
 type DnsStatus =
   | "ok"
@@ -174,12 +168,6 @@ function cleanDomain(raw: string): string | null {
     return null;
   }
   return d;
-}
-
-function clamp(n: unknown, min: number, max: number, dflt: number): number {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return dflt;
-  return Math.min(max, Math.max(min, Math.round(v)));
 }
 
 /**
@@ -367,6 +355,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: nu
 }
 
 export async function POST(req: NextRequest) {
+  const denied = localGuard(req);
+  if (denied) return denied;
+
   let body: {
     dns?: string;
     domains?: string[];

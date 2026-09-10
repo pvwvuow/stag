@@ -20,6 +20,7 @@ import {
 import { useStag, type ServiceMeta, type SweepResult } from "@/components/stag-store";
 import { getPreset, primaryProbeHost } from "@/lib/games";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
+import { apiFetch } from "@/lib/api-client";
 import { LiveChart, type LiveSample } from "@/components/ping-chart";
 import { flagUrl, latencyClass, pingQuality } from "@/components/ui-helpers";
 import { useToast } from "@/hooks/use-toast";
@@ -423,9 +424,8 @@ export function Dashboard() {
       let msKind: "tcp" | "dns" | null = null;
       let tcpOk: boolean | null = null;
       try {
-        const r = await fetch("/api/ping", {
+        const r = await apiFetch("/api/ping", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             server: target.server,
             domain: domainRef.current,
@@ -629,6 +629,25 @@ export function Dashboard() {
                       ? `با دکمه برق، ${powerTarget.name} (${powerTarget.ips.join(" ، ")}) روی ویندوز فعال می‌شود`
                       : "اول از بخش سرورها یک DNS فعال کن"}
               </p>
+              {st.dnsUnhealthy && !busy && (
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                  <span>
+                    DNS فعلی ۳ بار پشت‌سرهم جواب نداد — اینترنت از همین مسیر رد نمی‌شه. یا DNS دیگه‌ای وصل کن یا خاموشش کن.
+                  </span>
+                  <button
+                    onClick={() => st.checkConnection()}
+                    className="rounded-full bg-rose-500/15 px-3 py-1 transition-colors hover:bg-rose-500/25"
+                  >
+                    تست دوباره
+                  </button>
+                  <button
+                    onClick={() => st.disconnectDns()}
+                    className="rounded-full bg-rose-500 px-3 py-1 text-white transition-colors hover:bg-rose-500/90"
+                  >
+                    خاموش کن
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">

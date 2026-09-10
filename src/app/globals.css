@@ -369,3 +369,24 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scroll-thumb-hover);
 }
+
+/* Accessibility (فاز ۶.۵) — a consistent, high-visibility keyboard focus ring
+   across every interactive element in both themes. */
+:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[role="radio"]:focus-visible,
+[role="switch"]:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+/* Never show the mouse-click ring — keyboard only */
+:focus:not(:focus-visible) {
+  outline: none;
+}

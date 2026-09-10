@@ -11,6 +11,8 @@ import { Servers } from "@/components/views/servers";
 import { SettingsView } from "@/components/views/settings";
 import { About } from "@/components/views/about";
 import { APP_VERSION } from "@/lib/version";
+import { loadPrefs, pushPrefs } from "@/lib/prefs";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const NAV: Array<{ id: ViewId; label: string; icon: React.ReactNode }> = [
   { id: "dashboard", label: "داشبورد", icon: <Home className="h-[18px] w-[18px]" /> },
@@ -103,6 +105,13 @@ function Sidebar() {
 
 export function AppShell() {
   const st = useStag();
+
+  // فاز ۸ — re-apply the saved desktop prefs (tray / close-to-tray /
+  // auto-start) every boot; the main process defaults to all-off.
+  useEffect(() => {
+    pushPrefs(loadPrefs());
+  }, []);
+
   return (
     <div dir="ltr" className="app-bg flex h-screen overflow-hidden">
       <Sidebar />
@@ -110,11 +119,14 @@ export function AppShell() {
       <div dir="rtl" className="flex min-w-0 flex-1 flex-col">
         <WindowStrip />
         <main className="min-h-0 flex-1">
-          {st.view === "dashboard" && <Dashboard />}
-          {st.view === "optimize" && <Optimize />}
-          {st.view === "servers" && <Servers />}
-          {st.view === "settings" && <SettingsView />}
-          {st.view === "about" && <About />}
+          {/* ۵.۳ — a crashed view must never white-screen the whole app */}
+          <ErrorBoundary>
+            {st.view === "dashboard" && <Dashboard />}
+            {st.view === "optimize" && <Optimize />}
+            {st.view === "servers" && <Servers />}
+            {st.view === "settings" && <SettingsView />}
+            {st.view === "about" && <About />}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

@@ -4,6 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { localGuard } from "@/lib/guard";
+import {
+  buildScript,
+  sanitizeAlias,
+  IPV4_RE,
+  type DnsSnapshot,
+} from "@/lib/netsh-script";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -27,17 +34,10 @@ export const maxDuration = 180;
  * snapshot is cleared once restored.
  */
 
-const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV4 = IPV4_RE;
 
 /** Where the pre-apply DNS snapshot lives (per-user temp, survives app restart). */
 const SNAPSHOT_FILE = path.join(os.tmpdir(), "stag-dns-snapshot.json");
-
-interface DnsSnapshot {
-  alias: string;
-  /** "dhcp" => adapter was on automatic; "static" => had a manual server list */
-  mode: "dhcp" | "static";
-  servers: string[];
-}
 
 function readSnapshot(): DnsSnapshot | null {
   try {
@@ -180,7 +180,10 @@ async function probeDnsMode(alias: string): Promise<DnsSnapshot> {
   return { alias, mode: servers.length === 0 ? "dhcp" : mode, servers };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const denied = localGuard(req);
+  if (denied) return denied;
+
   if (process.platform !== "win32") {
     return NextResponse.json({ ok: true, supported: false, platform: process.platform });
   }
@@ -205,66 +208,13 @@ export async function GET() {
 
 /* ------------------------------ actions ------------------------------ */
 
-function sanitizeAlias(alias: string): string | null {
-  const clean = alias.replace(/["'`\r\n]/g, "").trim();
-  return clean.length > 0 && clean.length <= 64 ? clean : null;
-}
-
-/**
- * Build the elevated PowerShell script.
- *  - apply: set a static primary (+ optional secondary).
- *  - off:   RESTORE the pre-apply snapshot. `restore.mode==="static"` puts the
- *           user's own manual servers back; otherwise (or no snapshot) reset to
- *           DHCP. This is the 3.3 fix — never blindly force DHCP.
- */
-function buildScript(
-  action: "apply" | "off",
-  alias: string,
-  ips: string[],
-  resultFile: string,
-  restore?: DnsSnapshot | null,
-): string {
-  const head = `$ErrorActionPreference = 'Stop'\n$res = '${resultFile}'\ntry {\n`;
-  const tail =
-    `  ipconfig /flushdns | Out-Null\n` +
-    `  Set-Content -Path $res -Value 'OK' -Encoding UTF8\n` +
-    `} catch {\n` +
-    `  Set-Content -Path $res -Value ('ERR ' + $_.Exception.Message) -Encoding UTF8\n` +
-    `  exit 1\n` +
-    `}\n`;
-  if (action === "apply") {
-    const primary = ips[0];
-    const secondary = ips[1];
-    let body = `  $o1 = netsh interface ip set dns name="${alias}" static ${primary} 2>&1\n`;
-    body += `  if ($LASTEXITCODE -ne 0) { throw "set primary failed: $o1" }\n`;
-    if (secondary) {
-      body += `  $o2 = netsh interface ip add dns name="${alias}" ${secondary} index=2 2>&1\n`;
-      body += `  if ($LASTEXITCODE -ne 0) { throw "add secondary failed: $o2" }\n`;
-    }
-    return head + body + tail;
-  }
-  // off -> restore the state the user had BEFORE STAG touched DNS.
-  const restoreStatic =
-    restore &&
-    restore.mode === "static" &&
-    restore.servers.filter((ip) => IPV4.test(ip)).length > 0;
-  if (restoreStatic) {
-    const servers = restore!.servers.filter((ip) => IPV4.test(ip)).slice(0, 2);
-    let body = `  $o1 = netsh interface ip set dns name="${alias}" static ${servers[0]} 2>&1\n`;
-    body += `  if ($LASTEXITCODE -ne 0) { throw "restore primary failed: $o1" }\n`;
-    if (servers[1]) {
-      body += `  $o2 = netsh interface ip add dns name="${alias}" ${servers[1]} index=2 2>&1\n`;
-      body += `  if ($LASTEXITCODE -ne 0) { throw "restore secondary failed: $o2" }\n`;
-    }
-    return head + body + tail;
-  }
-  // no manual snapshot -> back to automatic (DHCP)
-  let body = `  $o1 = netsh interface ip set dnsservers name="${alias}" source=dhcp 2>&1\n`;
-  body += `  if ($LASTEXITCODE -ne 0) { throw "reset to dhcp failed: $o1" }\n`;
-  return head + body + tail;
-}
+// sanitizeAlias + buildScript + psQuote live in src/lib/netsh-script.ts —
+// pure, whitelist-based, and covered by unit tests (فاز ۴.۳ + ۷.۳).
 
 export async function POST(req: NextRequest) {
+  const denied = localGuard(req);
+  if (denied) return denied;
+
   if (process.platform !== "win32") {
     return NextResponse.json(
       { ok: false, error: "تغییر DNS سیستم فقط روی ویندوز پشتیبانی می‌شود." },

@@ -60,6 +60,9 @@ server.log
 !build/icon.png
 !build/icon.ico
 
+# single lockfile source: npm (bun.lock is dev-sandbox only — فاز ۷.۲)
+/bun.lock
+
 # sandbox / internal artifacts
 /.zscripts/
 /tool-results/

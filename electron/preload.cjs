@@ -22,11 +22,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /** App info */
   getVersion: () => ipcRenderer.invoke("app:get-version"),
 
+  /** Per-run token the renderer must attach to every /api call (فاز ۴.۲) */
+  getApiToken: () => ipcRenderer.invoke("app:get-api-token"),
+
   /** Open https links in the system browser (release page fallback etc.) */
   openExternal: (url) => ipcRenderer.send("app:open-url", url),
 
   /** Clear Chromium's host-resolver cache after a system-DNS change (3.2) */
   clearDnsCache: () => ipcRenderer.invoke("dns:clear-cache"),
+
+  /** Tray / close-to-tray / auto-start preferences (فاز ۸) */
+  setPrefs: (prefs) => ipcRenderer.invoke("app:set-prefs", prefs),
+
+  /** Tail of the rotating log file for support (فاز ۷.۶) */
+  getLogs: () => ipcRenderer.invoke("app:get-logs"),
+
+  /** Retry the embedded engine from the in-app error page (۵.۱) */
+  retryServer: () => ipcRenderer.invoke("app:retry-server"),
 
   /** In-app updates (electron-updater, differential blockmap downloads) */
   updater: {

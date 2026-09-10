@@ -20,8 +20,16 @@ export interface ElectronApi {
   isMaximized: () => Promise<boolean>;
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
   getVersion: () => Promise<string>;
+  getApiToken: () => Promise<string>;
   openExternal: (url: string) => void;
   clearDnsCache: () => Promise<{ ok: boolean }>;
+  setPrefs: (prefs: {
+    tray?: boolean;
+    closeToTray?: boolean;
+    autostart?: boolean;
+  }) => Promise<{ ok: boolean; autostartActive?: boolean | null; error?: string }>;
+  getLogs: () => Promise<{ ok: boolean; logs?: string; error?: string }>;
+  retryServer: () => Promise<{ ok: boolean; error?: string }>;
   updater: {
     getState: () => Promise<UpdateState>;
     check: () => Promise<UpdateState>;

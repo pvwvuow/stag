@@ -1,24 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resolver } from "node:dns/promises";
 import net from "node:net";
+import { PING_TUNING, clamp } from "@/lib/config";
+import { localGuard } from "@/lib/guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const DEFAULT_QUERY_TIMEOUT_MS = 3000;
-const MIN_QUERY_TIMEOUT_MS = 1000;
-const MAX_QUERY_TIMEOUT_MS = 6000;
-const DEFAULT_TCP_TIMEOUT_MS = 2500;
-const MIN_TCP_TIMEOUT_MS = 1000;
-const MAX_TCP_TIMEOUT_MS = 6000;
-const MAX_PROBE_IPS = 3;
-const MAX_PROBE_PORTS = 4;
-
-function clamp(n: unknown, min: number, max: number, dflt: number): number {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return dflt;
-  return Math.min(max, Math.max(min, Math.round(v)));
-}
+const DEFAULT_QUERY_TIMEOUT_MS = PING_TUNING.defaultQueryMs;
+const MIN_QUERY_TIMEOUT_MS = PING_TUNING.minQueryMs;
+const MAX_QUERY_TIMEOUT_MS = PING_TUNING.maxQueryMs;
+const DEFAULT_TCP_TIMEOUT_MS = PING_TUNING.defaultTcpMs;
+const MIN_TCP_TIMEOUT_MS = PING_TUNING.minTcpMs;
+const MAX_TCP_TIMEOUT_MS = PING_TUNING.maxTcpMs;
+const MAX_PROBE_IPS = PING_TUNING.maxProbeIps;
+const MAX_PROBE_PORTS = PING_TUNING.maxProbePorts;
 
 /**
  * Game-aware ping, tuned for accuracy ("نهایت دقت"):
@@ -93,6 +89,9 @@ function tcpTest(host: string, port: number, timeout: number): Promise<{ ok: boo
 }
 
 export async function POST(req: NextRequest) {
+  const denied = localGuard(req);
+  if (denied) return denied;
+
   let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number; systemServers?: string[] };
   try {
     body = await req.json();

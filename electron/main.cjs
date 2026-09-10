@@ -12,27 +12,43 @@
  * (drag region + min/max/close via IPC). See src/components/titlebar.tsx.
  */
 
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, session, Menu, Tray, nativeImage } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
 const FORCE_EMBEDDED = process.env.GAMEDNS_EMBEDDED === "1";
 const SMOKE_TEST = process.env.GAMEDNS_SMOKE === "1";
 const IS_DEV = FORCE_EMBEDDED ? false : !app.isPackaged;
 const DEV_URL = process.env.GAMEDNS_DEV_URL || "http://localhost:3000";
 
+// فاز ۴.۲ — per-run random token for the local API. The embedded Next server
+// requires it on every /api call; the renderer gets it through the preload
+// bridge (app:get-api-token). Random per launch, never persisted, never sent
+// anywhere outside 127.0.0.1.
+const API_TOKEN = crypto.randomBytes(24).toString("base64url");
+
 /** @type {BrowserWindow | null} */
 let win = null;
 /** @type {import("node:child_process").ChildProcess | null} */
 let nextProc = null;
 let quitting = false;
+/** URL of the embedded server once it is up (null until then). */
+let serverUrl = null;
+/** Auto-restart attempts for the embedded server (5.1). */
+let restartAttempts = 0;
+/** System tray (فاز ۸). */
+let tray = null;
+let trayEnabled = false;
+let closeToTray = false;
 
 /* ------------------------------------------------------------------ */
 
 function bootstrap() {
+  initLogger();
   registerIpc();
 
   // The updater is an optional feature — a failure here (missing module,
@@ -40,12 +56,13 @@ function bootstrap() {
   try {
     initUpdater();
   } catch (err) {
-    console.error("[stag] updater init failed (app continues without it):", err);
+    logLine("error", `updater init failed (app continues without it): ${err?.stack || err}`);
   }
 
   app.on("second-instance", () => {
     if (win) {
       if (win.isMinimized()) win.restore();
+      win.show();
       win.focus();
     }
   });
@@ -61,20 +78,79 @@ function bootstrap() {
   });
 
   app.whenReady().then(async () => {
+    initCsp();
     try {
       let url = DEV_URL;
       if (!IS_DEV) {
         url = await startEmbeddedServer();
         await waitForHttp(url, 20000);
       }
+      serverUrl = url;
+      restartAttempts = 0;
       createWindow(url);
     } catch (err) {
-      // Nothing sensible to show if the embedded server can't boot — log and exit.
-      console.error("[stag] fatal:", err);
-      app.quit();
+      // 5.1 — boot failure now shows the in-app error page (with retry),
+      // instead of silently quitting.
+      logLine("error", `embedded server boot failed: ${err?.stack || err}`);
+      createWindow(null);
     }
   });
 }
+
+/* ------------------------------ logger ----------------------------- */
+/**
+ * فاز ۷.۶ — lightweight rotating logger. Everything the main process does
+ * (boot, updater, embedded server stdout/stderr, renderer console errors,
+ * crashes) lands in <userData>/logs/stag.log with size-based rotation so
+ * users can "copy log for support" from the About page.
+ */
+let LOG_FILE = null;
+
+function initLogger() {
+  try {
+    const dir = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    LOG_FILE = path.join(dir, "stag.log");
+    rotateLogIfNeeded();
+    logLine("info", `--- STAG ${app.getVersion()} started (pid ${process.pid}, dev=${IS_DEV}) ---`);
+  } catch {
+    LOG_FILE = null;
+  }
+}
+
+function rotateLogIfNeeded() {
+  try {
+    if (LOG_FILE && fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 512 * 1024) {
+      fs.rmSync(LOG_FILE + ".old", { force: true });
+      fs.renameSync(LOG_FILE, LOG_FILE + ".old");
+    }
+  } catch {
+    /* rotation is best-effort */
+  }
+}
+
+function logLine(level, msg) {
+  const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
+  try {
+    if (LOG_FILE) {
+      fs.appendFileSync(LOG_FILE, line + "\n");
+      rotateLogIfNeeded();
+    }
+  } catch {
+    /* noop */
+  }
+  if (level === "error") console.error(line);
+  else console.log(line);
+}
+
+// 5.1 — a stray async error must not produce the scary red Electron dialog.
+// Log it and keep running; genuinely fatal states end at the error page.
+process.on("uncaughtException", (err) => {
+  logLine("error", `uncaughtException: ${err?.stack || err}`);
+});
+process.on("unhandledRejection", (err) => {
+  logLine("error", `unhandledRejection: ${err?.stack || err}`);
+});
 
 /* ------------------------- embedded server ------------------------- */
 
@@ -120,23 +196,69 @@ async function startEmbeddedServer() {
       NODE_ENV: "production",
       PORT: String(port),
       HOSTNAME: "127.0.0.1",
+      STAG_API_TOKEN: API_TOKEN, // فاز ۴.۲ — the local API requires this token
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
 
-  nextProc.stdout?.on("data", (d) => process.stdout.write(`[next] ${d}`));
-  nextProc.stderr?.on("data", (d) => process.stderr.write(`[next] ${d}`));
+  nextProc.stdout?.on("data", (d) => {
+    const s = String(d).trim();
+    if (s) logLine("info", `[next] ${s.slice(0, 500)}`);
+  });
+  nextProc.stderr?.on("data", (d) => {
+    const s = String(d).trim();
+    if (s) logLine("error", `[next] ${s.slice(0, 500)}`);
+  });
   nextProc.on("exit", (code) => {
     nextProc = null;
-    if (!quitting && win && !win.isDestroyed()) {
-      // The engine died unexpectedly — close the app rather than showing a dead page.
-      console.error(`[stag] embedded server exited unexpectedly (code ${code})`);
-      win.close();
-    }
+    if (quitting) return;
+    logLine("error", `embedded server exited unexpectedly (code ${code})`);
+    scheduleServerRestart();
   });
 
   return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * 5.۱ — the embedded server dying used to close the whole app without a
+ * word. Now: auto-restart with linear backoff (up to 3 tries); if it still
+ * won't come up, show the in-app error page with a manual retry button.
+ */
+function scheduleServerRestart() {
+  if (restartAttempts >= 3) {
+    showServerError("died");
+    return;
+  }
+  restartAttempts += 1;
+  const delay = 1500 * restartAttempts;
+  logLine("info", `auto-restarting embedded server (attempt ${restartAttempts}/3 in ${delay}ms)`);
+  setTimeout(async () => {
+    if (quitting) return;
+    try {
+      const url = await startEmbeddedServer();
+      await waitForHttp(url, 20000);
+      serverUrl = url;
+      restartAttempts = 0;
+      logLine("info", "embedded server restarted OK");
+      if (win && !win.isDestroyed()) {
+        win.loadURL(url).catch(() => {});
+      }
+    } catch (err) {
+      logLine("error", `embedded server restart failed: ${err?.stack || err}`);
+      showServerError("restart");
+    }
+  }, delay);
+}
+
+function showServerError(reason) {
+  if (!win || win.isDestroyed()) return;
+  logLine("error", `showing in-app error page (reason: ${reason})`);
+  win
+    .loadFile(path.join(__dirname, "error.html"), {
+      search: `reason=${encodeURIComponent(reason)}`,
+    })
+    .catch(() => {});
 }
 
 function waitForHttp(url, timeoutMs) {
@@ -169,13 +291,23 @@ function waitForHttp(url, timeoutMs) {
 }
 
 function killNextServer() {
-  if (nextProc) {
-    try {
-      nextProc.kill();
-    } catch {
-      /* noop */
+  if (!nextProc) return;
+  const p = nextProc;
+  nextProc = null;
+  try {
+    if (process.platform === "win32" && p.pid) {
+      // 5.۶ — the standalone server can hold worker children; a plain kill()
+      // leaves grandchildren alive holding the port. taskkill /T takes the
+      // whole tree down.
+      spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    } else {
+      p.kill();
     }
-    nextProc = null;
+  } catch {
+    /* noop */
   }
 }
 
@@ -212,11 +344,137 @@ function createWindow(url) {
 
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
+  // 7.۶ — capture renderer console errors + crashes into the log file.
+  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    if (level >= 2) {
+      logLine("error", `[renderer] ${message} (${sourceId}:${line})`);
+    }
+  });
+  win.webContents.on("render-process-gone", (_e, details) => {
+    logLine("error", `renderer gone: ${details?.reason} (exitCode ${details?.exitCode})`);
+  });
+
+  // فاز ۸ — close-to-tray: when enabled, closing the window hides it instead
+  // of quitting (downloads/monitoring keep running in the tray).
+  win.on("close", (e) => {
+    if (closeToTray && trayEnabled && !quitting) {
+      e.preventDefault();
+      win?.hide();
+    }
+  });
+
   win.on("closed", () => {
     win = null;
   });
 
-  win.loadURL(url);
+  if (url) {
+    win.loadURL(url);
+  } else {
+    showServerError("boot");
+  }
+}
+
+/* ------------------------------- CSP ------------------------------- */
+/**
+ * فاز ۴.۵ — defense-in-depth Content-Security-Policy on everything the
+ * embedded server serves. 'unsafe-inline' stays because Next.js bootstraps
+ * with inline scripts/styles; remote script/style/frame/object sources are
+ * still impossible. Skipped in dev (next dev's React refresh needs eval).
+ */
+function initCsp() {
+  if (IS_DEV) return;
+  const CSP = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+  try {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (/^https?:\/\/(127\.0\.0\.1|localhost)(:|$)/i.test(details.url)) {
+        callback({
+          responseHeaders: {
+            ...details.responseHeaders,
+            "Content-Security-Policy": [CSP],
+          },
+        });
+      } else {
+        callback({});
+      }
+    });
+    logLine("info", "CSP enabled");
+  } catch (err) {
+    logLine("error", `CSP init failed: ${err?.message}`);
+  }
+}
+
+/* ------------------------------- tray ------------------------------ */
+/** فاز ۸ — system tray + minimize/close to tray + auto-start with Windows. */
+
+function trayIconPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "stag-icon.png")
+    : path.join(__dirname, "..", "build", "icon.png");
+}
+
+function ensureTray() {
+  if (tray || !trayEnabled) return;
+  try {
+    let icon = nativeImage.createFromPath(trayIconPath());
+    if (!icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 });
+    tray = new Tray(icon);
+    tray.setToolTip("STAG — Lower Ping, Better Play");
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: "نمایش STAG",
+          click: () => {
+            if (win) {
+              win.show();
+              win.focus();
+            }
+          },
+        },
+        { type: "separator" },
+        {
+          label: "خروج",
+          click: () => {
+            quitting = true;
+            killNextServer();
+            app.quit();
+          },
+        },
+      ]),
+    );
+    tray.on("double-click", () => {
+      if (win) {
+        win.show();
+        win.focus();
+      }
+    });
+    logLine("info", "system tray created");
+  } catch (err) {
+    logLine("error", `tray init failed: ${err?.message}`);
+    tray = null;
+  }
+}
+
+function removeTray() {
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      /* noop */
+    }
+    tray = null;
+    logLine("info", "system tray removed");
+  }
 }
 
 /* ------------------------------- IPC ------------------------------- */
@@ -231,6 +489,8 @@ function registerIpc() {
   ipcMain.on("window:close", () => win?.close());
   ipcMain.handle("window:is-maximized", () => (win ? win.isMaximized() : false));
   ipcMain.handle("app:get-version", () => app.getVersion());
+  // فاز ۴.۲ — the renderer must attach this token to every /api call.
+  ipcMain.handle("app:get-api-token", () => API_TOKEN);
   ipcMain.on("app:open-url", (_e, url) => {
     if (typeof url === "string" && /^https:\/\//i.test(url)) {
       shell.openExternal(url).catch(() => {});
@@ -255,8 +515,69 @@ function registerIpc() {
       }
       return { ok: true };
     } catch (err) {
-      console.error("[stag] clearHostResolverCache failed:", err);
+      logLine("error", `clearHostResolverCache failed: ${err?.message}`);
       return { ok: false };
+    }
+  });
+
+  // فاز ۸ — tray / close-to-tray / auto-start preferences from Settings.
+  ipcMain.handle("app:set-prefs", (_e, prefs) => {
+    try {
+      if (!prefs || typeof prefs !== "object") return { ok: false };
+      if (typeof prefs.tray === "boolean") {
+        trayEnabled = prefs.tray;
+        if (trayEnabled) ensureTray();
+        else removeTray();
+      }
+      if (typeof prefs.closeToTray === "boolean") closeToTray = prefs.closeToTray;
+      if (typeof prefs.autostart === "boolean") {
+        app.setLoginItemSettings({ openAtLogin: prefs.autostart });
+        logLine("info", `auto-start with Windows: ${prefs.autostart}`);
+      }
+      let autostartActive = null;
+      try {
+        autostartActive = app.getLoginItemSettings().openAtLogin;
+      } catch {
+        /* not supported on this platform */
+      }
+      return { ok: true, autostartActive };
+    } catch (err) {
+      logLine("error", `set-prefs failed: ${err?.message}`);
+      return { ok: false, error: String(err?.message || err) };
+    }
+  });
+
+  // 7.۶ — the About page reads a tail of the log file for support.
+  ipcMain.handle("app:get-logs", async () => {
+    try {
+      if (!LOG_FILE || !fs.existsSync(LOG_FILE)) return { ok: true, logs: "(لاگی ثبت نشده است)" };
+      const stat = fs.statSync(LOG_FILE);
+      const start = Math.max(0, stat.size - 96 * 1024);
+      const len = stat.size - start;
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(LOG_FILE, "r");
+      fs.readSync(fd, buf, 0, len, start);
+      fs.closeSync(fd);
+      return { ok: true, logs: buf.toString("utf8") };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  // 5.۱ — retry button on the error page.
+  ipcMain.handle("app:retry-server", async () => {
+    try {
+      logLine("info", "manual server retry requested");
+      if (nextProc) killNextServer();
+      const url = await startEmbeddedServer();
+      await waitForHttp(url, 20000);
+      serverUrl = url;
+      restartAttempts = 0;
+      if (win && !win.isDestroyed()) await win.loadURL(url);
+      return { ok: true };
+    } catch (err) {
+      logLine("error", `manual retry failed: ${err?.stack || err}`);
+      return { ok: false, error: String((err && err.message) || err) };
     }
   });
 }
