@@ -3,7 +3,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "تستر DNS گیم | چک کردن سلامت DNS بازی‌ها",
+  title: "STAG | تستر DNS گیم — چک کردن سلامت DNS بازی‌ها",
   description:
     "بدون باز کردن بازی چک کن DNSهایی که روی گیم (کنسول/PC/روتر) ست کردی کار میکنن یا نه — با تست دامنه‌های PSN، Xbox، کالاف دیوتی، فورتنایت، EA و بیشتر.",
   icons: {
@@ -22,7 +22,7 @@ export default function RootLayout({
         {/* Apply saved theme before first paint (dark = black+cyan is the default) */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem("gamedns.theme")==="light"){document.documentElement.classList.remove("dark")}}catch(e){}`,
+            __html: `try{if(localStorage.getItem("stag.theme")==="light"){document.documentElement.classList.remove("dark")}}catch(e){}`,
           }}
         />
       </head>

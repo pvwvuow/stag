@@ -1,5 +1,5 @@
 {
-  "name": "gamedns-tester",
+  "name": "stag",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -96,15 +96,15 @@
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
   },
-  "description": "تستر سلامت DNS گیم — بدون باز کردن بازی چک کن DNSهات وصل میکنن یا نه",
+  "description": "STAG — تستر سلامت DNS گیم؛ بدون باز کردن بازی چک کن DNSهات وصل میکنن یا نه",
   "license": "MIT",
   "author": {
-    "name": "Game DNS Tester"
+    "name": "STAG"
   },
   "main": "electron/main.cjs",
   "build": {
-    "appId": "ir.gamedns.tester",
-    "productName": "Game DNS Tester",
+    "appId": "ir.stag.app",
+    "productName": "STAG",
     "directories": {
       "output": "release"
     },
@@ -148,14 +148,14 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "artifactName": "GameDNSTester-Setup-${version}.${ext}",
-      "shortcutName": "Game DNS Tester",
-      "uninstallDisplayName": "Game DNS Tester",
+      "artifactName": "STAG-Setup-${version}.${ext}",
+      "shortcutName": "STAG",
+      "uninstallDisplayName": "STAG",
       "allowToChangeInstallationDirectory": true
     },
     "afterPack": "scripts/afterPack.cjs",
     "portable": {
-      "artifactName": "GameDNSTester-Portable-${version}.${ext}"
+      "artifactName": "STAG-Portable-${version}.${ext}"
     },
     "npmRebuild": false
   }

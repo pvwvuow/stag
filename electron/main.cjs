@@ -1,5 +1,5 @@
 /**
- * Game DNS Tester — Electron main process
+ * STAG — Electron main process
  *
  * Architecture:
  *  - Production: an embedded Next.js standalone server is spawned as a pure
@@ -69,7 +69,7 @@ function bootstrap() {
       createWindow(url);
     } catch (err) {
       // Nothing sensible to show if the embedded server can't boot — log and exit.
-      console.error("[gamedns] fatal:", err);
+      console.error("[stag] fatal:", err);
       app.quit();
     }
   });
@@ -130,7 +130,7 @@ async function startEmbeddedServer() {
     nextProc = null;
     if (!quitting && win && !win.isDestroyed()) {
       // The engine died unexpectedly — close the app rather than showing a dead page.
-      console.error(`[gamedns] embedded server exited unexpectedly (code ${code})`);
+      console.error(`[stag] embedded server exited unexpectedly (code ${code})`);
       win.close();
     }
   });
@@ -188,7 +188,7 @@ function createWindow(url) {
     minHeight: 600,
     show: false,
     frame: false,
-    title: "تستر DNS گیم",
+    title: "STAG",
     backgroundColor: "#070b0e",
     icon: fs.existsSync(path.join(__dirname, "..", "build", "icon.png"))
       ? path.join(__dirname, "..", "build", "icon.png")

@@ -87,7 +87,7 @@ const PRESET_ICONS: Record<string, LucideIcon> = {
   rockstar: Car,
 };
 
-const STORAGE_KEY = "gamedns.servers.v1";
+const STORAGE_KEY = "stag.servers.v1";
 const MAX_DNS = 8;
 
 /* ---------------- helpers ---------------- */

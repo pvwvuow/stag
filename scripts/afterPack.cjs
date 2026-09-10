@@ -42,13 +42,13 @@ exports.default = async function afterPack(context) {
   vi.setStringValues(
     { lang: 1033, charset: 1200 },
     {
-      CompanyName: "GameDNS",
-      FileDescription: "GameDNS Tester — DNS health checker for gamers",
+      CompanyName: "STAG",
+      FileDescription: "STAG — DNS health checker for gamers",
       FileVersion: v,
-      InternalName: "gamedns-tester",
+      InternalName: "stag",
       LegalCopyright: "MIT License",
       OriginalFilename: exeName,
-      ProductName: "GameDNS Tester",
+      ProductName: "STAG",
       ProductVersion: v,
     },
     true

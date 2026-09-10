@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Gamepad2, Sun, Moon, Minus, Square, Copy, X } from "lucide-react";
 
-const THEME_KEY = "gamedns.theme";
+const THEME_KEY = "stag.theme";
 type Theme = "dark" | "light";
 
 function applyTheme(theme: Theme) {
@@ -80,7 +80,7 @@ export function Titlebar() {
         <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-primary/40 bg-primary/15 text-primary">
           <Gamepad2 className="h-4 w-4" />
         </span>
-        <span className="text-sm font-black leading-none">تستر DNS گیم</span>
+        <span className="ltr text-sm font-black leading-none tracking-[0.2em] text-primary">STAG</span>
         <span className="hidden text-[10px] text-muted-foreground sm:inline">نسخه دسکتاپ</span>
       </div>
 

@@ -84,7 +84,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="mt-auto border-t border-border bg-background/60 backdrop-blur">
         <div className="mx-auto max-w-5xl px-4 py-4 text-center text-xs text-muted-foreground">
-          تستر DNS گیم — سلامت DNS، پینگ و مسیر سرورهای بازی، قبل از روشن کردن کنسول
+          STAG — تستر سلامت DNS، پینگ و مسیر سرورهای بازی، قبل از روشن کردن کنسول
         </div>
       </footer>
     </div>
