@@ -30,18 +30,18 @@ let win = null;
 let nextProc = null;
 let quitting = false;
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  bootstrap();
-}
-
 /* ------------------------------------------------------------------ */
 
 function bootstrap() {
   registerIpc();
-  initUpdater();
+
+  // The updater is an optional feature — a failure here (missing module,
+  // odd environment, …) must NEVER take the whole app down.
+  try {
+    initUpdater();
+  } catch (err) {
+    console.error("[stag] updater init failed (app continues without it):", err);
+  }
 
   app.on("second-instance", () => {
     if (win) {
@@ -299,7 +299,9 @@ function loadUpdater() {
 }
 
 function initUpdater() {
-  if (IS_DEV || SMOKE_TEST) return;
+  // GAMEDNS_UPDATER_FORCE=1 lets the smoke test exercise the real packaged
+  // code path (dev/smoke runs skip the updater by default).
+  if ((IS_DEV || SMOKE_TEST) && process.env.GAMEDNS_UPDATER_FORCE !== "1") return;
 
   // Portable exe cannot self-replace -> offer manual download instead.
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
@@ -407,4 +409,21 @@ function runSmokeTest() {
       app.exit(1);
     }
   }, 3500);
+}
+
+/* ---------------------------- entry point -------------------------- */
+/**
+ * NOTE: this MUST stay at the very bottom of the file, after every
+ * module-level let/const declaration. Function declarations hoist, but
+ * `let`/`const` bindings do not — calling bootstrap() from the top of the
+ * file while initUpdater() → loadUpdater() reads `autoUpdaterRef` (declared
+ * above) threw "Cannot access 'autoUpdaterRef' before initialization":
+ * the v1.3.0 launch crash. Bottom placement makes the whole class of
+ * module-ordering crashes impossible.
+ */
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  bootstrap();
 }
