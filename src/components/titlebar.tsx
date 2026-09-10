@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Gamepad2, Sun, Moon, Minus, Square, Copy, X } from "lucide-react";
+import { Sun, Moon, Minus, Square, Copy, X } from "lucide-react";
 
 const THEME_KEY = "stag.theme";
-type Theme = "dark" | "light";
+export type Theme = "dark" | "light";
 
-function applyTheme(theme: Theme) {
+export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === "light") root.classList.remove("dark");
   else root.classList.add("dark");
@@ -42,24 +42,26 @@ function WinButton({
   );
 }
 
-export function Titlebar() {
+/**
+ * Slim strip on top of the main area: theme toggle + frameless-window
+ * controls (right side, like the reference mock). Full strip is a drag region.
+ */
+export function WindowStrip() {
   const [isDesktop, setIsDesktop] = useState(false);
   const [maximized, setMaximized] = useState(false);
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
     setIsDesktop(!!window.electronAPI?.isDesktop);
-
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(THEME_KEY);
     } catch {
       /* noop */
     }
-    if (saved === "light") {
-      document.documentElement.classList.remove("dark");
-      setTheme("light");
-    }
+    const initial: Theme = saved === "dark" ? "dark" : "light";
+    applyTheme(initial);
+    setTheme(initial);
 
     if (window.electronAPI) {
       window.electronAPI.isMaximized().then(setMaximized).catch(() => {});
@@ -74,17 +76,8 @@ export function Titlebar() {
   };
 
   return (
-    <header className="app-drag sticky top-0 z-50 flex h-11 w-full shrink-0 select-none items-center justify-between border-b border-border bg-background/85 pe-2 ps-3 backdrop-blur">
-      {/* brand (start / right in RTL) */}
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-primary/40 bg-primary/15 text-primary">
-          <Gamepad2 className="h-4 w-4" />
-        </span>
-        <span className="ltr text-sm font-black leading-none tracking-[0.2em] text-primary">STAG</span>
-        <span className="hidden text-[10px] text-muted-foreground sm:inline">نسخه دسکتاپ</span>
-      </div>
-
-      {/* actions (end / left in RTL) */}
+    <header className="app-drag flex h-10 w-full shrink-0 select-none items-center justify-between gap-2 pe-3 ps-4">
+      {/* controls sit at the visual right edge (start side in RTL) */}
       <div className="flex items-center gap-1">
         <button
           onClick={toggleTheme}
@@ -113,6 +106,8 @@ export function Titlebar() {
           </>
         )}
       </div>
+      {/* drag filler towards the left */}
+      <span className="flex-1" aria-hidden />
     </header>
   );
 }

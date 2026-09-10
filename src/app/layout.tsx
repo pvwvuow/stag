@@ -3,11 +3,11 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "STAG | تستر DNS گیم — چک کردن سلامت DNS بازی‌ها",
+  title: "STAG | Lower Ping • Better Play",
   description:
-    "بدون باز کردن بازی چک کن DNSهایی که روی گیم (کنسول/PC/روتر) ست کردی کار میکنن یا نه — با تست دامنه‌های PSN، Xbox، کالاف دیوتی، فورتنایت، EA و بیشتر.",
+    "تستر سلامت DNS مخصوص گیم — تست همزمان چندین DNS، پیدا کردن سریع‌ترین سرور و بررسی دامنه‌ها و پورت‌های بازی، بدون باز کردن بازی.",
   icons: {
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>",
+    icon: "/brand/stag.svg",
   },
 };
 
@@ -17,16 +17,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fa" dir="rtl" className="dark" suppressHydrationWarning>
+    <html lang="fa" dir="rtl" suppressHydrationWarning>
       <head>
-        {/* Apply saved theme before first paint (dark = black+cyan is the default) */}
+        {/* Apply saved theme before first paint (day = white+cyan is the default) */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem("stag.theme")==="light"){document.documentElement.classList.remove("dark")}}catch(e){}`,
+            __html: `try{if(localStorage.getItem("stag.theme")==="dark"){document.documentElement.classList.add("dark")}}catch(e){}`,
           }}
         />
       </head>
-      <body className="antialiased bg-background text-foreground min-h-screen flex flex-col">
+      <body className="antialiased bg-background text-foreground min-h-screen">
         {children}
         <Toaster />
       </body>

@@ -182,10 +182,10 @@ function killNextServer() {
 
 function createWindow(url) {
   win = new BrowserWindow({
-    width: 1120,
-    height: 780,
-    minWidth: 460,
-    minHeight: 600,
+    width: 1280,
+    height: 820,
+    minWidth: 1024,
+    minHeight: 640,
     show: false,
     frame: false,
     title: "STAG",
