@@ -12,8 +12,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+// fileURLToPath (NOT .pathname) — Windows-safe root resolution.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "stag-units-"));
 
 // 1) compile the pure modules

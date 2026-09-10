@@ -14,8 +14,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+// fileURLToPath (NOT .pathname) — Windows-safe root resolution.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mainCjs = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, "electron", "main.cjs");
 const src = fs.readFileSync(mainCjs, "utf8");
 

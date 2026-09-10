@@ -4,8 +4,12 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+// fileURLToPath (NOT .pathname) — .pathname keeps the "/D:/..." leading slash
+// on Windows and path.resolve then prepends the drive again ("D:\D:\..."),
+// which broke the GitHub Actions Windows runner (beta.2 CI failure).
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const version = pkg.version;
 
