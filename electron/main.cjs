@@ -236,6 +236,29 @@ function registerIpc() {
       shell.openExternal(url).catch(() => {});
     }
   });
+
+  // 3.2 — Electron is Chromium: it keeps its OWN host-resolver cache that
+  // `ipconfig /flushdns` does NOT touch. After STAG changes the system DNS,
+  // the renderer (and any internal fetch) could keep resolving through the
+  // stale Chromium cache — the app would still "connect" to the old DNS. Clear
+  // that cache and drop live sockets so the next lookup re-resolves fresh.
+  ipcMain.handle("dns:clear-cache", async () => {
+    try {
+      const ses = win?.webContents?.session;
+      if (!ses) return { ok: false };
+      await ses.clearHostResolverCache();
+      // Best-effort: close pooled connections so the next request re-resolves.
+      try {
+        await ses.closeAllConnections?.();
+      } catch {
+        /* older Electron: method may be absent */
+      }
+      return { ok: true };
+    } catch (err) {
+      console.error("[stag] clearHostResolverCache failed:", err);
+      return { ok: false };
+    }
+  });
 }
 
 /* ---------------------------- updater ------------------------------ */

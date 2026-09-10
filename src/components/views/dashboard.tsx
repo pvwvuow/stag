@@ -396,12 +396,17 @@ export function Dashboard() {
   const domainRef = useRef(domain);
   const tcpRef = useRef(st.tcpEnabled);
   const portsRef = useRef<number[]>(game?.tcpPorts ?? []);
+  // 3.1 — the live loop must resolve through the CURRENT system DNS, not a
+  // stale c-ares cache. Keep the freshest system servers in a ref so the probe
+  // always pins the resolver to what the OS uses right now.
+  const sysServersRef = useRef<string[]>(st.dnsSys.primary?.servers ?? []);
   useEffect(() => {
     targetRef.current = liveTarget;
     domainRef.current = domain;
     tcpRef.current = st.tcpEnabled;
     portsRef.current = game?.tcpPorts ?? [];
-  }, [liveTarget, domain, st.tcpEnabled, game]);
+    sysServersRef.current = st.dnsSys.primary?.servers ?? [];
+  }, [liveTarget, domain, st.tcpEnabled, game, st.dnsSys.primary]);
 
   useEffect(() => {
     if (!live) return;
@@ -426,6 +431,8 @@ export function Dashboard() {
             domain: domainRef.current,
             tcp: tcpRef.current,
             ports: portsRef.current,
+            // only relevant when probing the system resolver (3.1)
+            systemServers: target.server === "system" ? sysServersRef.current : undefined,
           }),
         });
         const d = await r.json();

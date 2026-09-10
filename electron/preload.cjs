@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /** Open https links in the system browser (release page fallback etc.) */
   openExternal: (url) => ipcRenderer.send("app:open-url", url),
 
+  /** Clear Chromium's host-resolver cache after a system-DNS change (3.2) */
+  clearDnsCache: () => ipcRenderer.invoke("dns:clear-cache"),
+
   /** In-app updates (electron-updater, differential blockmap downloads) */
   updater: {
     getState: () => ipcRenderer.invoke("update:get-state"),

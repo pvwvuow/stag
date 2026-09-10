@@ -93,7 +93,7 @@ function tcpTest(host: string, port: number, timeout: number): Promise<{ ok: boo
 }
 
 export async function POST(req: NextRequest) {
-  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number };
+  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number; systemServers?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -110,6 +110,17 @@ export async function POST(req: NextRequest) {
   // Client-tunable timeouts, clamped to safe bounds (2.6).
   const queryTimeout = clamp(body.queryTimeoutMs, MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS);
   const tcpTimeout = clamp(body.tcpTimeoutMs, MIN_TCP_TIMEOUT_MS, MAX_TCP_TIMEOUT_MS, DEFAULT_TCP_TIMEOUT_MS);
+  // 3.1 — fresh system DNS servers passed by the client (read live from
+  // /api/system-dns after every apply/off). The embedded Next server is a
+  // long-lived process; c-ares reads the OS resolvers ONCE at boot and caches
+  // them, so after `netsh` changes the system DNS this process would keep
+  // querying the STALE server and "live monitoring" would report the OLD DNS's
+  // ping. Explicitly re-pointing the resolver at the current system servers on
+  // every system-mode probe kills that stale cache — the root cause of the
+  // "DNS doesn't clear after switching/off" complaint.
+  const systemServers = (body.systemServers ?? []).filter(
+    (ip) => typeof ip === "string" && net.isIP(ip) !== 0,
+  );
   const ports = [
     ...new Set(
       (body.ports ?? [])
@@ -121,7 +132,18 @@ export async function POST(req: NextRequest) {
   const probePorts = ports.slice(0, MAX_PROBE_PORTS);
 
   const resolver = new Resolver({ timeout: queryTimeout, tries: 1 });
-  if (!useSystem) resolver.setServers([rawServer]);
+  if (!useSystem) {
+    resolver.setServers([rawServer]);
+  } else if (systemServers.length > 0) {
+    // 3.1 — pin the resolver to the CURRENT system DNS instead of relying on
+    // c-ares' boot-time cache, so a just-applied/just-removed DNS is honoured
+    // immediately (no stale ping from the previous server).
+    try {
+      resolver.setServers(systemServers.slice(0, 3));
+    } catch {
+      /* malformed list — fall back to the process default resolvers */
+    }
+  }
 
   const race = <T>(p: Promise<T>): Promise<T> =>
     Promise.race([

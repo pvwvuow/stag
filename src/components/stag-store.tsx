@@ -676,6 +676,44 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [refreshDns]);
 
+  /**
+   * 3.2 — after a system-DNS change, Chromium keeps its own host-resolver cache
+   * that `ipconfig /flushdns` never clears. Ask the Electron main process to
+   * drop it (+ pooled sockets) so the renderer re-resolves through the new DNS.
+   * No-op in a plain browser (no electronAPI).
+   */
+  const clearBrowserDnsCache = useCallback(async () => {
+    try {
+      await window.electronAPI?.clearDnsCache?.();
+    } catch {
+      /* best-effort */
+    }
+  }, []);
+
+  /**
+   * 3.4 — netsh sometimes applies with a short delay, and the OS may take a
+   * moment to expose the new servers. A single refresh can therefore still show
+   * the OLD state. Poll a few times with spacing so the UI converges on the
+   * real post-change state quickly. Returns the freshest system servers seen.
+   */
+  const refreshDnsBurst = useCallback(async () => {
+    for (let i = 0; i < 3; i++) {
+      await refreshDns();
+      if (i < 2) await new Promise((r) => setTimeout(r, 700));
+    }
+  }, [refreshDns]);
+
+  /** Read the adapter's CURRENT DNS servers straight from the core (3.1). */
+  const fetchSystemServers = useCallback(async (): Promise<string[]> => {
+    try {
+      const r = await fetch("/api/system-dns");
+      const d = (await r.json()) as { ok?: boolean; primary?: SysInterface | null };
+      return d.ok && d.primary?.servers ? d.primary.servers : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   /** If the active system DNS belongs to a known service, that service; otherwise manual. */
   const sysMatch = useMemo<ServiceMeta | null>(() => {
     const first = dnsSys.primary?.servers?.[0];
@@ -711,19 +749,24 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({ action: "apply", ips: meta.ips }),
         });
         const d = (await r.json()) as { ok?: boolean; error?: string };
-        await refreshDns();
         if (d.ok) {
+          // 3.2 — drop Chromium's stale host-resolver cache, then 3.4 — poll the
+          // system state a few times so the UI reflects the just-applied DNS.
+          await clearBrowserDnsCache();
+          await refreshDnsBurst();
           setState((s) => ({ ...s, selectedService: meta.id }));
           toast({
             title: "DNS وصل شد",
             description: `${meta.name} روی سیستم فعال شد — کش DNS هم پاک شد.`,
           });
-          // verify real connectivity through the new DNS
+          // verify real connectivity through the new DNS. Pass the fresh system
+          // servers so the probe resolves through the NEW DNS, not a stale one (3.1).
           try {
+            const sysServers = await fetchSystemServers();
             const c = await fetch("/api/ping", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ server: "system", tcp: false }),
+              body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
             }).then((x) => x.json());
             if (c?.ok) {
               toast({
@@ -741,6 +784,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             /* verification is best-effort */
           }
         } else {
+          await refreshDns();
           toast({
             title: "وصل نشد",
             description: d.error ?? "دسترسی مدیر (UAC) لازم است.",
@@ -753,7 +797,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         setDnsAction(null);
       }
     },
-    [dnsAction, state.selectedService, state.activeServices, bestService, metaFor, dnsSys.supported, refreshDns, toast],
+    [dnsAction, state.selectedService, state.activeServices, bestService, metaFor, dnsSys.supported, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast],
   );
 
   const disconnectDns = useCallback(async () => {
@@ -773,14 +817,45 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "off" }),
       });
-      const d = (await r.json()) as { ok?: boolean; error?: string };
-      await refreshDns();
+      const d = (await r.json()) as { ok?: boolean; error?: string; restored?: "dhcp" | "static" };
       if (d.ok) {
+        // 3.2 + 3.4 — clear Chromium's resolver cache, then poll the system
+        // state so the UI leaves the "on" state promptly.
+        await clearBrowserDnsCache();
+        await refreshDnsBurst();
+        const restoredManual = d.restored === "static";
         toast({
           title: "DNS خاموش شد",
-          description: "DNS سیستم به حالت خودکار (DHCP) برگشت — کش هم پاک شد.",
+          description: restoredManual
+            ? "DNS سیستم به تنظیمات دستی قبلی‌ات برگشت — کش هم پاک شد."
+            : "DNS سیستم به حالت خودکار (DHCP) برگشت — کش هم پاک شد.",
         });
+        // 3.5 — prove the change actually took effect: probe through the CURRENT
+        // system DNS (freshly read) instead of just showing a toast blindly.
+        try {
+          const sysServers = await fetchSystemServers();
+          const c = (await fetch("/api/ping", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
+          }).then((x) => x.json())) as { ok?: boolean; ms?: number | null };
+          if (c?.ok) {
+            toast({
+              title: "قطع تأیید شد",
+              description: `اینترنت از طریق DNS جدید سیستم جواب می‌دهد: ${c.ms} میلی‌ثانیه`,
+            });
+          } else {
+            toast({
+              title: "هشدار",
+              description: "DNS خاموش شد ولی اینترنت جواب نداد — اتصال یا فایروال را چک کن.",
+              variant: "destructive",
+            });
+          }
+        } catch {
+          /* verification is best-effort */
+        }
       } else {
+        await refreshDns();
         toast({
           title: "خاموش نشد",
           description: d.error ?? "دسترسی مدیر (UAC) لازم است.",
@@ -792,7 +867,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setDnsAction(null);
     }
-  }, [dnsAction, dnsSys.supported, refreshDns, toast]);
+  }, [dnsAction, dnsSys.supported, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast]);
 
   const flushDns = useCallback(async () => {
     setDnsAction("flush");
@@ -803,6 +878,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ action: "flush" }),
       });
       const d = (await r.json()) as { ok?: boolean; error?: string };
+      // 3.2 — also clear Chromium's own resolver cache, not just the OS cache.
+      if (d.ok) await clearBrowserDnsCache();
       toast(
         d.ok
           ? { title: "کش DNS پاک شد", description: "حالا آدرس‌ها دوباره از DNS فعالی گرفته می‌شن." }
@@ -813,14 +890,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setDnsAction(null);
     }
-  }, [toast]);
+  }, [clearBrowserDnsCache, toast]);
 
   const checkConnection = useCallback(async () => {
     try {
+      const sysServers = dnsSys.primary?.servers ?? [];
       const d = (await fetch("/api/ping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server: "system", tcp: false }),
+        body: JSON.stringify({ server: "system", tcp: false, systemServers: sysServers }),
       }).then((x) => x.json())) as { ok?: boolean; ms?: number | null; domain?: string };
       if (d?.ok) {
         toast({
@@ -837,7 +915,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     } catch {
       toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
     }
-  }, [toast]);
+  }, [dnsSys.primary, toast]);
 
   /* ----------------------- in-app updates ------------------------ */
 

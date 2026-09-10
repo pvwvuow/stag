@@ -21,6 +21,7 @@ export interface ElectronApi {
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
   getVersion: () => Promise<string>;
   openExternal: (url: string) => void;
+  clearDnsCache: () => Promise<{ ok: boolean }>;
   updater: {
     getState: () => Promise<UpdateState>;
     check: () => Promise<UpdateState>;
