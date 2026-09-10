@@ -189,7 +189,7 @@ function createWindow(url) {
     minHeight: 640,
     show: false,
     frame: false,
-    title: "STAG",
+    title: "STAG Beta",
     backgroundColor: "#070b0e",
     icon: fs.existsSync(path.join(__dirname, "..", "build", "icon.png"))
       ? path.join(__dirname, "..", "build", "icon.png")

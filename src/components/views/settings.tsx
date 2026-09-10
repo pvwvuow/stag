@@ -19,6 +19,7 @@ import {
 import { useStag, MAX_SERVICES } from "@/components/stag-store";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { APP_VERSION } from "@/lib/version";
 
 const THEME_KEY = "stag.theme";
 const RELEASES_URL = "https://github.com/pvwvuow/stag/releases/latest";
@@ -34,7 +35,7 @@ export function SettingsView() {
   const { toast } = useToast();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isDesktop, setIsDesktop] = useState(false);
-  const [version, setVersion] = useState<string>("1.3.0");
+  const [version, setVersion] = useState<string>(APP_VERSION);
 
   useEffect(() => {
     setIsDesktop(!!window.electronAPI?.isDesktop);

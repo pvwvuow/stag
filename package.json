@@ -1,6 +1,6 @@
 {
   "name": "stag",
-  "version": "1.3.1",
+  "version": "1.4.0-beta.1",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
@@ -104,8 +104,8 @@
   },
   "main": "electron/main.cjs",
   "build": {
-    "appId": "ir.stag.app",
-    "productName": "STAG",
+    "appId": "ir.stag.beta",
+    "productName": "STAG Beta",
     "directories": {
       "output": "release"
     },
@@ -161,14 +161,14 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "artifactName": "STAG-Setup-${version}.${ext}",
-      "shortcutName": "STAG",
-      "uninstallDisplayName": "STAG",
+      "artifactName": "STAG-Beta-Setup-${version}.${ext}",
+      "shortcutName": "STAG Beta",
+      "uninstallDisplayName": "STAG Beta",
       "allowToChangeInstallationDirectory": true
     },
     "afterPack": "scripts/afterPack.cjs",
     "portable": {
-      "artifactName": "STAG-Portable-${version}.${ext}"
+      "artifactName": "STAG-Beta-Portable-${version}.${ext}"
     },
     "npmRebuild": false
   }

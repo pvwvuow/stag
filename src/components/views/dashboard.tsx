@@ -135,6 +135,14 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
               p{r.viaPort}
             </span>
           )}
+          {r.msKind === "dns" && (
+            <span
+              className="text-[8px] font-medium text-amber-600 dark:text-amber-400"
+              title="پورت بازی جواب نداد — این عدد زمان کوئری DNS است، نه پینگ سرور بازی"
+            >
+              زمان DNS
+            </span>
+          )}
           {r.tcpOk === false && (
             <span className="text-[8px] font-medium text-amber-600 dark:text-amber-400">
               ۴۴۳ بسته
@@ -406,6 +414,8 @@ export function Dashboard() {
       if (!target) return;
       let ok = false;
       let ms: number | null = null;
+      let msKind: "tcp" | "dns" | null = null;
+      let tcpOk: boolean | null = null;
       try {
         const r = await fetch("/api/ping", {
           method: "POST",
@@ -420,11 +430,13 @@ export function Dashboard() {
         const d = await r.json();
         ok = !!d.ok;
         ms = d.ok ? (d.ms ?? null) : null;
+        msKind = d.ok ? (d.msKind ?? null) : null;
+        tcpOk = d.tcpOk ?? null;
       } catch {
         ok = false;
       }
       if (!alive) return;
-      setSamples((s) => [...s.slice(-59), { t: Date.now(), ok, ms }]);
+      setSamples((s) => [...s.slice(-59), { t: Date.now(), ok, ms, msKind, tcpOk }]);
     };
     tick();
     const iv = setInterval(() => {
@@ -438,8 +450,27 @@ export function Dashboard() {
   }, [live]);
 
   const liveStats = useMemo(() => {
-    const ok = samples.filter((s) => s.ok && s.ms !== null);
-    const vals = ok.map((s) => s.ms as number);
+    /* A probe counts as a "delivered packet to the game server" only when we
+       actually reached it. If TCP monitoring produced a verdict, that verdict
+       (tcpOk) is the source of truth — a DNS answer alone does NOT mean the
+       game server is reachable, so it must not be counted as a healthy packet.
+       When no TCP verdict exists (TCP off / DNS-time fallback) we fall back to
+       the request-level ok flag. */
+    const reachable = (s: LiveSample) =>
+      s.tcpOk === true ? true : s.tcpOk === false ? false : s.ok;
+    const delivered = samples.filter((s) => reachable(s) && s.ms !== null);
+    /* Latency stats use ONLY real game-server RTTs when any exist, so a stray
+       DNS-time fallback never pollutes the average/jitter. If every sample is a
+       DNS-time fallback we still show it (clearly labelled elsewhere). */
+    const tcpVals = delivered.filter((s) => s.msKind === "tcp").map((s) => s.ms as number);
+    const anyVals = delivered.map((s) => s.ms as number);
+    const vals = tcpVals.length ? tcpVals : anyVals;
+    const kind: "tcp" | "dns" | "mixed" =
+      tcpVals.length && tcpVals.length === anyVals.length
+        ? "tcp"
+        : tcpVals.length
+          ? "mixed"
+          : "dns";
     const cur = vals.length ? vals[vals.length - 1] : null;
     const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
     const min = vals.length ? Math.min(...vals) : null;
@@ -450,8 +481,10 @@ export function Dashboard() {
       for (let i = 1; i < vals.length; i++) sum += Math.abs(vals[i] - vals[i - 1]);
       jitter = Math.round(sum / (vals.length - 1));
     }
-    const loss = samples.length ? Math.round(((samples.length - ok.length) / samples.length) * 100) : null;
-    return { cur, avg, min, max, jitter, loss, total: samples.length };
+    const loss = samples.length
+      ? Math.round(((samples.length - delivered.length) / samples.length) * 100)
+      : null;
+    return { cur, avg, min, max, jitter, loss, kind, total: samples.length };
   }, [samples]);
 
   const busy = st.dnsAction !== null;
@@ -769,6 +802,14 @@ export function Dashboard() {
                     ? `کیفیت: ${pingQuality(liveStats.avg).label}`
                     : "در انتظار داده"}
                 </p>
+                {liveStats.total > 0 && liveStats.kind !== "tcp" && (
+                  <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
+                    <Info className="h-3 w-3 shrink-0" />
+                    {liveStats.kind === "dns"
+                      ? "پورت بازی جواب نداد — عدد بالا زمان پاسخ DNS است، نه پینگ واقعی سرور بازی"
+                      : "بخشی از نمونه‌ها فقط زمان DNS بود — پینگ نمایش‌داده‌شده از دست‌دادن واقعی سرور بازی گرفته شده"}
+                  </p>
+                )}
               </>
             ) : (
               <p className="py-6 text-center text-xs text-muted-foreground">

@@ -150,10 +150,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // `ms` is the number STAG surfaces as the headline latency. When a real
+    // game-server TCP handshake succeeded it IS the game RTT; otherwise we fall
+    // back to the DNS query time — which is a DIFFERENT, much smaller metric.
+    // `msKind` tells the client exactly which one it is so the UI never passes
+    // a DNS lookup off as a game ping ("داده غلط").
     const ms = tcpMs ?? dnsMs;
+    const msKind: "tcp" | "dns" = tcpMs !== null ? "tcp" : "dns";
     return NextResponse.json({
       ok: true,
       ms,
+      msKind,
       dnsMs,
       tcpMs,
       tcpOk,
@@ -169,6 +176,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: false,
       ms: null,
+      msKind: null,
       dnsMs: null,
       tcpMs: null,
       tcpOk: null,

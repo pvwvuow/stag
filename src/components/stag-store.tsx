@@ -52,6 +52,8 @@ export interface ApiResult {
 export interface SweepResult {
   ok: boolean;
   ms: number | null;
+  /** which metric `ms` actually is: real game-server TCP RTT, or DNS query time */
+  msKind?: "tcp" | "dns" | null;
   dnsMs: number | null;
   tcpMs: number | null;
   tcpOk: boolean | null;
@@ -133,6 +135,25 @@ const STATE_KEY = "stag.state.v3";
 const LEGACY_V2_KEY = "stag.state.v2";
 const LEGACY_V1_KEY = "stag.servers.v1";
 export const MAX_SERVICES = 12;
+
+/**
+ * Pick the best (lowest) latency for a service across its IPs, but PREFER
+ * results that are real game-server TCP round-trips over DNS-time fallbacks.
+ * A blocked game port that only yields a tiny DNS-query time must never beat a
+ * service that actually reached the game server — that was the core reason
+ * STAG could crown the "wrong" best DNS.
+ */
+function bestOfResults(
+  results: Array<SweepResult | undefined>,
+): { ms: number; kind: "tcp" | "dns" } | null {
+  const ok = results.filter(
+    (r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number",
+  );
+  if (ok.length === 0) return null;
+  const tcp = ok.filter((r) => r.msKind === "tcp").map((r) => r.ms);
+  if (tcp.length > 0) return { ms: Math.min(...tcp), kind: "tcp" };
+  return { ms: Math.min(...ok.map((r) => r.ms)), kind: "dns" };
+}
 
 const DEFAULT_ACTIVE = ["electro", "shecan", "google", "cloudflare", "quad9"];
 
@@ -419,16 +440,21 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
     const finish = () => {
       let best: { id: string; ms: number } | null = null;
+      let bestKind: "tcp" | "dns" = "dns";
       const okMsAll: number[] = [];
       for (const m of metas) {
-        const msList = m.ips
-          .map((ip) => collected[ip])
-          .filter((r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number")
-          .map((r) => r.ms);
-        okMsAll.push(...msList);
-        if (msList.length > 0) {
-          const ms = Math.min(...msList);
-          if (!best || ms < best.ms) best = { id: m.id, ms };
+        const b = bestOfResults(m.ips.map((ip) => collected[ip]));
+        if (!b) continue;
+        okMsAll.push(b.ms);
+        // Prefer a real game-server RTT over a DNS-time result; within the same
+        // kind, prefer the lower latency.
+        const better =
+          !best ||
+          (b.kind === "tcp" && bestKind === "dns") ||
+          (b.kind === bestKind && b.ms < best.ms);
+        if (better) {
+          best = { id: m.id, ms: b.ms };
+          bestKind = b.kind;
         }
       }
       const avg = okMsAll.length
@@ -467,6 +493,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           (d: {
             ok?: boolean;
             ms?: number | null;
+            msKind?: "tcp" | "dns" | null;
             dnsMs?: number | null;
             tcpMs?: number | null;
             tcpOk?: boolean | null;
@@ -476,6 +503,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             apply(ip, {
               ok: !!d.ok,
               ms: d.ok ? (d.ms ?? null) : null,
+              msKind: d.ok ? (d.msKind ?? null) : null,
               dnsMs: d.dnsMs ?? null,
               tcpMs: d.tcpMs ?? null,
               tcpOk: d.tcpOk ?? null,
@@ -487,6 +515,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           apply(ip, {
             ok: false,
             ms: null,
+            msKind: null,
             dnsMs: null,
             tcpMs: null,
             tcpOk: null,
@@ -556,14 +585,18 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
   const bestService = useMemo(() => {
     let best: { id: string; ms: number } | null = null;
+    let bestKind: "tcp" | "dns" = "dns";
     for (const m of services) {
-      const msList = m.ips
-        .map((ip) => sweepResults[ip])
-        .filter((r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number")
-        .map((r) => r.ms);
-      if (msList.length === 0) continue;
-      const ms = Math.min(...msList);
-      if (!best || ms < best.ms) best = { id: m.id, ms };
+      const b = bestOfResults(m.ips.map((ip) => sweepResults[ip]));
+      if (!b) continue;
+      const better =
+        !best ||
+        (b.kind === "tcp" && bestKind === "dns") ||
+        (b.kind === bestKind && b.ms < best.ms);
+      if (better) {
+        best = { id: m.id, ms: b.ms };
+        bestKind = b.kind;
+      }
     }
     return best;
   }, [services, sweepResults]);

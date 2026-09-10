@@ -10,6 +10,7 @@ import { Optimize } from "@/components/views/optimize";
 import { Servers } from "@/components/views/servers";
 import { SettingsView } from "@/components/views/settings";
 import { About } from "@/components/views/about";
+import { APP_VERSION } from "@/lib/version";
 
 const NAV: Array<{ id: ViewId; label: string; icon: React.ReactNode }> = [
   { id: "dashboard", label: "داشبورد", icon: <Home className="h-[18px] w-[18px]" /> },
@@ -21,7 +22,7 @@ const NAV: Array<{ id: ViewId; label: string; icon: React.ReactNode }> = [
 
 function Sidebar() {
   const st = useStag();
-  const [version, setVersion] = useState("1.3.0");
+  const [version, setVersion] = useState(APP_VERSION);
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
@@ -80,7 +81,7 @@ function Sidebar() {
           >
             <ArrowDownToLine className={`h-4 w-4 shrink-0 ${updateReady ? "animate-bounce" : ""}`} />
             <span className="min-w-0 flex-1 truncate">
-              {updateReady ? "آماده نصب — کلیک کن" : `نسخه ${st.update.version} موجوزه`}
+              {updateReady ? "آماده نصب — کلیک کن" : `نسخه ${st.update.version} موجوده`}
             </span>
           </button>
         )}
@@ -92,7 +93,9 @@ function Sidebar() {
             <span className="mt-1 block h-0.5 w-8 rounded-full bg-primary" />
           </div>
         </div>
-        <p className="ltr text-[10px] font-medium text-muted-foreground/70">STAG v{version}</p>
+        <p className="ltr text-[10px] font-medium text-muted-foreground/70">
+          STAG <span className="rounded-sm bg-primary/15 px-1 font-bold text-primary">BETA</span> v{version}
+        </p>
       </div>
     </nav>
   );

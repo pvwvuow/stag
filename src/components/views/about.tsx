@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { Github, ShieldCheck, Wifi, Gauge, Gamepad2, Download } from "lucide-react";
 import { StagMark } from "@/components/brand";
 import { useStag } from "@/components/stag-store";
+import { APP_VERSION } from "@/lib/version";
 
 export function About() {
   const st = useStag();
-  const [version, setVersion] = useState("1.3.0");
+  const [version, setVersion] = useState(APP_VERSION);
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
   }, []);
