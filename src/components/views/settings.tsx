@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Settings, Sun, Moon, Trash2, Monitor, Info } from "lucide-react";
-import { useStag, MAX_SERVERS } from "@/components/stag-store";
+import { useStag, MAX_SERVICES } from "@/components/stag-store";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 
@@ -13,7 +13,7 @@ export function SettingsView() {
   const { toast } = useToast();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isDesktop, setIsDesktop] = useState(false);
-  const [version, setVersion] = useState<string>("1.1.0");
+  const [version, setVersion] = useState<string>("1.2.0");
 
   useEffect(() => {
     setIsDesktop(!!window.electronAPI?.isDesktop);
@@ -96,12 +96,12 @@ export function SettingsView() {
         </div>
         <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
           <div>
-            <p className="text-sm font-medium">سقف سرورهای فعال</p>
+            <p className="text-sm font-medium">سقف سرویس‌های فعال</p>
             <p className="text-[11px] text-muted-foreground">
-              حداکثر {MAX_SERVERS} DNS به‌صورت همزمان — برای جلوگیری از شلوغی شبکه
+              حداکثر {MAX_SERVICES} سرویس DNS به‌صورت همزمان — هر سرویس با هر دو آی‌پی خودش تست می‌شود
             </p>
           </div>
-          <CountChip>{MAX_SERVERS}</CountChip>
+          <CountChip>{MAX_SERVICES}</CountChip>
         </div>
       </section>
 
@@ -115,6 +115,7 @@ export function SettingsView() {
         <button
           onClick={() => {
             try {
+              localStorage.removeItem("stag.state.v3");
               localStorage.removeItem("stag.state.v2");
               localStorage.removeItem("stag.servers.v1");
             } catch {

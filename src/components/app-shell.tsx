@@ -21,7 +21,7 @@ const NAV: Array<{ id: ViewId; label: string; icon: React.ReactNode }> = [
 
 function Sidebar() {
   const st = useStag();
-  const [version, setVersion] = useState("1.1.0");
+  const [version, setVersion] = useState("1.2.0");
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
@@ -57,7 +57,7 @@ function Sidebar() {
                     active ? "bg-white/25 text-white" : "bg-primary/10 text-primary"
                   }`}
                 >
-                  {st.activeServers.length}
+                  {st.activeServices.length}
                 </span>
               )}
             </button>

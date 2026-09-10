@@ -13,7 +13,7 @@ import {
   Info,
   Swords,
 } from "lucide-react";
-import { useStag, GAME_PRESETS, getPreset, type ApiResult } from "@/components/stag-store";
+import { useStag, GAME_PRESETS, getPreset, type ApiResult, type ServiceMeta } from "@/components/stag-store";
 import { GameGlyph } from "@/components/brand";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -25,6 +25,8 @@ import {
   verdictOf,
   type Tone,
 } from "@/components/ui-helpers";
+import { DNS_GROUPS } from "@/lib/dns-catalog";
+import { FlagCircle } from "@/components/views/dashboard";
 
 /* --------------------------- game grid --------------------------- */
 
@@ -128,7 +130,7 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
   );
 }
 
-function ServerResultCard({
+function IpResultCard({
   ip,
   res,
   isWinner,
@@ -136,11 +138,22 @@ function ServerResultCard({
   onToggle,
 }: {
   ip: string;
-  res: ApiResult;
+  res?: ApiResult;
   isWinner: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
+  if (!res) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-card/70 p-3.5">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        <span className="ltr font-mono text-sm">{ip}</span>
+        <span className="text-xs text-muted-foreground">
+          در حال کوئری دامنه‌ها و تست پورت‌ها (تا ~۳۰ ثانیه)
+        </span>
+      </div>
+    );
+  }
   const { tone, label } = verdictOf(res);
   const s = res.summary;
   return (
@@ -197,26 +210,43 @@ export function Optimize() {
 
   const game = getPreset(st.gameId);
 
-  const ranked = useMemo(() => {
-    const entries = st.fullTest.order
-      .map((ip) => ({ ip, res: st.fullTest.results[ip] }))
+  const score = (res: ApiResult) => {
+    const { tone } = verdictOf(res);
+    const toneRank = tone === "ok" ? 0 : tone === "partial" ? 1 : tone === "unknown" ? 2 : 3;
+    return toneRank * 10000 + (res.summary.avgLatency ?? 9999);
+  };
+
+  /* group the full-test order by service (name header + paired IPs below) */
+  const groups: Array<{ meta: ServiceMeta | null; ips: string[] }> = (() => {
+    const bySid = new Map<string, string[]>();
+    for (const { ip, sid } of st.fullTest.order) {
+      const list = bySid.get(sid) ?? [];
+      list.push(ip);
+      bySid.set(sid, list);
+    }
+    return Array.from(bySid.entries()).map(([sid, ips]) => ({
+      meta: st.metaFor(sid),
+      ips,
+    }));
+  })();
+
+  const winnerIp = useMemo(() => {
+    const done = st.fullTest.order
+      .map((o) => ({ ip: o.ip, res: st.fullTest.results[o.ip] }))
       .filter((e) => e.res);
-    const score = (res: ApiResult) => {
-      const { tone } = verdictOf(res);
-      const toneRank = tone === "ok" ? 0 : tone === "partial" ? 1 : tone === "unknown" ? 2 : 3;
-      return toneRank * 10000 + (res.summary.avgLatency ?? 9999);
-    };
-    return entries.sort((a, b) => score(a.res) - score(b.res));
+    const ranked = done.sort((a, b) => score(a.res!) - score(b.res!));
+    const top = ranked[0];
+    return top && verdictOf(top.res!).tone === "ok" ? top.ip : null;
   }, [st.fullTest.order, st.fullTest.results]);
 
-  const winnerIp = ranked[0] && verdictOf(ranked[0].res).tone === "ok" ? ranked[0].ip : null;
-
-  // Display: finished servers sorted best-first, then still-pending ones in activation order.
-  const displayOrder = useMemo(() => {
-    const done = ranked.map((e) => e.ip);
-    const pending = st.fullTest.order.filter((ip) => !st.fullTest.results[ip]);
-    return [...done, ...pending];
-  }, [ranked, st.fullTest.order, st.fullTest.results]);
+  const groupRank = (meta: ServiceMeta | null, ips: string[]) => {
+    const best = ips
+      .map((ip) => st.fullTest.results[ip])
+      .filter((r): r is ApiResult => !!r)
+      .map((r) => score(r));
+    const base = meta?.custom ? 9000 : 0;
+    return best.length ? Math.min(...best) + base : 99999;
+  };
 
   return (
     <div className="h-full min-h-0 space-y-5 overflow-y-auto p-5" dir="rtl">
@@ -267,7 +297,8 @@ export function Optimize() {
               <p className="mt-0.5 text-[11px] text-muted-foreground">
                 {game.domains.length} دامنه + پورت‌های{" "}
                 <span className="ltr font-mono">{game.tcpPorts.join(", ")}</span> — روی{" "}
-                {st.activeServers.length} سرور فعال همزمان تست میشه
+                {st.services.reduce((a, m) => a + m.ips.length, 0)} آی‌پی از {st.services.length}{" "}
+                سرویس همزمان تست می‌شود
               </p>
             </>
           ) : (
@@ -283,7 +314,7 @@ export function Optimize() {
           </span>
           <button
             onClick={st.runFullTest}
-            disabled={st.fullTest.inProgress || !game}
+            disabled={st.fullTest.inProgress || !game || st.services.length === 0}
             className="flex min-h-[42px] items-center gap-2 rounded-xl bg-primary px-5 font-bold text-primary-foreground shadow-[0_0_30px_-8px] shadow-primary/50 transition-opacity hover:bg-primary/90 disabled:opacity-50"
           >
             {st.fullTest.inProgress ? (
@@ -294,44 +325,64 @@ export function Optimize() {
             ) : (
               <>
                 <Play className="h-4 w-4" />
-                تست همزمان {st.activeServers.length} سرور
+                تست همزمان {st.services.length} سرویس
               </>
             )}
           </button>
         </div>
       </section>
 
-      {/* results */}
+      {/* results — grouped by service: name on top, its DNS IPs below side by side */}
       {st.fullTest.order.length > 0 && (
-        <section className="space-y-2.5">
-          <h2 className="text-sm font-bold text-muted-foreground">نتایج (مرتب‌شده از بهترین)</h2>
-          {displayOrder.map((ip) => {
-            const res = st.fullTest.results[ip];
-            if (!res) {
+        <section className="space-y-4">
+          <h2 className="text-sm font-bold text-muted-foreground">
+            نتایج (مرتب‌شده از بهترین — هر سرویس با آی‌پی‌های خودش)
+          </h2>
+          {[...groups]
+            .sort((a, b) => groupRank(a.meta, a.ips) - groupRank(b.meta, b.ips))
+            .map(({ meta, ips }) => {
+              const groupHasWinner = ips.some((ip) => ip === winnerIp && !st.fullTest.inProgress);
               return (
-                <div
-                  key={ip}
-                  className="flex items-center gap-3 rounded-2xl border border-border bg-card/70 p-3.5"
-                >
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span className="ltr font-mono text-sm">{ip}</span>
-                  <span className="text-xs text-muted-foreground">
-                    در حال کوئری دامنه‌ها و تست پورت‌ها (تا ~۳۰ ثانیه)
-                  </span>
+                <div key={meta?.id ?? ips[0]} className="space-y-2">
+                  {/* service header — which service these DNS belong to */}
+                  <div className="flex flex-wrap items-center gap-2 px-1">
+                    <FlagCircle cc={meta?.cc ?? "ir"} size="h-6 w-6" />
+                    <p className="text-sm font-bold" dir="rtl">
+                      {meta?.name ?? "سرویس"}
+                      {meta && !meta.custom && (
+                        <span className="ltr ms-1.5 text-[10px] font-medium text-muted-foreground">
+                          {meta.latin}
+                        </span>
+                      )}
+                    </p>
+                    {meta && !meta.custom && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {DNS_GROUPS.find((g) => g.id === meta.group)?.label}
+                      </span>
+                    )}
+                    {groupHasWinner && (
+                      <Badge className="border border-primary/40 bg-primary/15 text-[10px] text-primary">
+                        <Trophy className="h-3 w-3" />
+                        بهترین سرویس
+                      </Badge>
+                    )}
+                  </div>
+                  {/* the DNS addresses of this service, side by side */}
+                  <div className={`grid gap-2.5 ${ips.length > 1 ? "lg:grid-cols-2" : "grid-cols-1"}`}>
+                    {ips.map((ip) => (
+                      <IpResultCard
+                        key={ip}
+                        ip={ip}
+                        res={st.fullTest.results[ip]}
+                        isWinner={winnerIp === ip && !st.fullTest.inProgress}
+                        expanded={!!expanded[ip]}
+                        onToggle={() => setExpanded((e) => ({ ...e, [ip]: !e[ip] }))}
+                      />
+                    ))}
+                  </div>
                 </div>
               );
-            }
-            return (
-              <ServerResultCard
-                key={ip}
-                ip={ip}
-                res={res}
-                isWinner={winnerIp === ip && !st.fullTest.inProgress}
-                expanded={!!expanded[ip]}
-                onToggle={() => setExpanded((e) => ({ ...e, [ip]: !e[ip] }))}
-              />
-            );
-          })}
+            })}
         </section>
       )}
 

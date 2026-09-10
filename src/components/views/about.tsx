@@ -5,7 +5,7 @@ import { Github, ShieldCheck, Wifi, Gauge, Gamepad2 } from "lucide-react";
 import { StagMark } from "@/components/brand";
 
 export function About() {
-  const [version, setVersion] = useState("1.1.0");
+  const [version, setVersion] = useState("1.2.0");
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
   }, []);

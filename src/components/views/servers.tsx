@@ -2,11 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { Server, Plus, Trash2, Search, ShieldAlert, Globe2 } from "lucide-react";
-import { useStag, DNS_CATALOG, MAX_SERVERS } from "@/components/stag-store";
+import { useStag, DNS_CATALOG, MAX_SERVICES } from "@/components/stag-store";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { FlagCircle, SignalBars, useServerRows } from "@/components/views/dashboard";
+import { FlagCircle, SignalBars } from "@/components/views/dashboard";
 import { reachLabel } from "@/lib/dns-catalog";
 
 const REACH_BADGE = {
@@ -15,48 +15,62 @@ const REACH_BADGE = {
   "iran-only": "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
 } as const;
 
-function ServerManageRow({ ip }: { ip: string }) {
+/** Per-IP mini status inside a service row — the two DNS of one service sit side by side. */
+function IpChip({ ip, sweep }: { ip: string; sweep?: { ok: boolean; ms: number | null } }) {
+  return (
+    <span className="flex items-center gap-2 rounded-xl border border-border bg-background/60 px-2.5 py-1.5">
+      <span className="ltr font-mono text-[11px] text-foreground/90">{ip}</span>
+      {sweep ? (
+        sweep.ok ? (
+          <>
+            <span className="ltr text-[11px] font-bold text-primary">{sweep.ms} ms</span>
+            <SignalBars ms={sweep.ms} />
+          </>
+        ) : (
+          <span className="text-[10px] text-muted-foreground">بی‌پاسخ</span>
+        )
+      ) : (
+        <span className="text-[10px] text-muted-foreground/60">تست نشده</span>
+      )}
+    </span>
+  );
+}
+
+function ServiceRow({ id }: { id: string }) {
   const st = useStag();
-  const entry = DNS_CATALOG.find((e) => e.ips.includes(ip));
-  const row = useServerRows().find((r) => r.ip === ip);
-  const enabled = st.activeServers.includes(ip);
-  const canEnable = enabled || st.activeServers.length < MAX_SERVERS;
+  const entry = DNS_CATALOG.find((e) => e.id === id);
+  if (!entry) return null;
+  const enabled = st.activeServices.includes(id);
+  const canEnable = enabled || st.activeServices.length < MAX_SERVICES;
 
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
-      <FlagCircle cc={entry?.cc ?? "ir"} />
-      <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
+      <FlagCircle cc={entry.cc} />
+      <div className="min-w-0 flex-1 basis-52">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-bold" dir="rtl">
-            {entry?.name ?? "سرور دلخواه"}
+            {entry.name}
           </p>
-          <span className="ltr text-[11px] text-muted-foreground">{entry?.latin ?? ip}</span>
+          <span className="ltr text-[11px] text-muted-foreground">{entry.latin}</span>
           {entry && (
             <Badge className={`border text-[10px] ${REACH_BADGE[entry.reach]}`}>
               {reachLabel(entry.reach)}
             </Badge>
           )}
         </div>
-        <p className="ltr mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-          {entry ? entry.ips.join("  ·  ") : ip}
-        </p>
-        {entry?.note && <p className="mt-0.5 text-[10px] text-muted-foreground/80">{entry.note}</p>}
+        {entry.note && <p className="mt-0.5 text-[10px] text-muted-foreground/80">{entry.note}</p>}
       </div>
-      <span className="hidden items-center gap-1.5 sm:flex">
-        {row?.sweep ? (
-          row.sweep.ok ? (
-            <span className="ltr text-xs font-bold text-primary">{row.sweep.ms} ms</span>
-          ) : (
-            <span className="text-xs text-muted-foreground">بدون پاسخ</span>
-          )
-        ) : null}
-        <SignalBars ms={row?.sweep?.ok ? row.sweep.ms : null} />
-      </span>
+      {/* both DNS addresses of the service, side by side */}
+      <div className="flex flex-wrap gap-2">
+        {entry.ips.map((ip) => (
+          <IpChip key={ip} ip={ip} sweep={st.sweepResults[ip]} />
+        ))}
+      </div>
       <Switch
         checked={enabled}
         disabled={!canEnable}
-        onCheckedChange={() => st.toggleServer(ip)}
-        aria-label={enabled ? "غیرفعال کردن" : "فعال کردن"}
+        onCheckedChange={() => st.toggleService(id)}
+        aria-label={enabled ? "غیرفعال کردن سرویس" : "فعال کردن سرویس"}
       />
     </div>
   );
@@ -64,24 +78,23 @@ function ServerManageRow({ ip }: { ip: string }) {
 
 function CustomRow({ ip }: { ip: string }) {
   const st = useStag();
-  const row = useServerRows().find((r) => r.ip === ip);
-  const enabled = st.activeServers.includes(ip);
+  const id = `custom:${ip}`;
+  const enabled = st.activeServices.includes(id);
+  const canEnable = enabled || st.activeServices.length < MAX_SERVICES;
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/70 p-3">
       <FlagCircle cc="ir" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-52">
         <p className="ltr font-mono text-sm font-bold">{ip}</p>
         <p className="text-[10px] text-muted-foreground">سرور دلخواه — از تنظیمات روتر/کنسول خودت</p>
       </div>
-      {row?.sweep ? (
-        row.sweep.ok ? (
-          <span className="ltr text-xs font-bold text-primary">{row.sweep.ms} ms</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">بدون پاسخ</span>
-        )
-      ) : null}
-      <SignalBars ms={row?.sweep?.ok ? row.sweep.ms : null} />
-      <Switch checked={enabled} onCheckedChange={() => st.toggleServer(ip)} aria-label="تغییر وضعیت" />
+      <IpChip ip={ip} sweep={st.sweepResults[ip]} />
+      <Switch
+        checked={enabled}
+        disabled={!canEnable}
+        onCheckedChange={() => st.toggleService(id)}
+        aria-label="تغییر وضعیت"
+      />
       <button
         onClick={() => st.removeCustomServer(ip)}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500"
@@ -100,11 +113,6 @@ export function Servers() {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
 
-  const allIps = useMemo(() => {
-    const catalogFirstIps = DNS_CATALOG.map((e) => e.ips[0]);
-    return [...catalogFirstIps, ...st.customServers];
-  }, [st.customServers]);
-
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (id: string) =>
@@ -115,6 +123,12 @@ export function Servers() {
       DNS_CATALOG.find((e) => e.id === id)?.ips.some((ip) => ip.includes(q));
     return DNS_CATALOG.filter((e) => match(e.id));
   }, [query]);
+
+  const filteredCustom = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return st.customServers;
+    return st.customServers.filter((ip) => ip.includes(q));
+  }, [query, st.customServers]);
 
   const addCustom = () => {
     const ip = input.trim();
@@ -141,12 +155,12 @@ export function Servers() {
             سرورهای DNS
           </h1>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            هر تعداد سرور را فعال کن (تا {MAX_SERVERS} مورد) — همه در هر تست همزمان و موازی سنجیده
-            میشن. ترتیب فعال‌شدن = ترتیب اولویت.
+            هر تعداد سرویس را فعال کن (تا {MAX_SERVICES} مورد) — هر سرویس با هر دو آی‌پی DNS خودش در
+            تست‌ها همزمان و موازی سنجیده می‌شود.
           </p>
         </div>
         <Badge className="border border-primary/40 bg-primary/10 text-primary">
-          {st.activeServers.length}/{MAX_SERVERS} فعال
+          {st.activeServices.length}/{MAX_SERVICES} فعال
         </Badge>
       </div>
 
@@ -171,8 +185,8 @@ export function Servers() {
           </button>
         </div>
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-          نکته: تست از سیستم خودت اجرا میشه؛ پس DNSهای داخلی ایران (مثل رادار گیم و وانیلا) هم
-          واقعاً قابل سنجیدن — به شرطی که ISP مسیر UDP ۵۳ را بسته نباشه.
+          نکته: تست از سیستم خودت اجرا می‌شود؛ پس DNSهای داخلی ایران (مثل رادار گیم و وانیلا) هم
+          واقعاً قابل سنجیدن — به شرطی که ISP مسیر UDP ۵۳ را بسته نباشد.
         </p>
       </section>
 
@@ -182,21 +196,21 @@ export function Servers() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="جستجو بین ۱۸ سرویس..."
+          placeholder="جستجو بین سرویس‌ها و آی‌پی‌ها..."
           className="h-10 w-full rounded-xl border border-input bg-background/70 pe-10 ps-3 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary/60"
         />
       </div>
 
       {/* catalog groups */}
       {filteredGroups.map((e) => (
-        <ServerManageRow key={e.id} ip={e.ips[0]} />
+        <ServiceRow key={e.id} id={e.id} />
       ))}
 
       {/* custom servers */}
-      {st.customServers.length > 0 && (
+      {filteredCustom.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold text-muted-foreground">سرورهای دلخواه</h2>
-          {st.customServers.map((ip) => (
+          {filteredCustom.map((ip) => (
             <CustomRow key={ip} ip={ip} />
           ))}
         </section>
@@ -208,7 +222,7 @@ export function Servers() {
           <Globe2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             <b className="text-foreground">قابل تست از همه‌جا</b> — این سرورها از هر اینترنتی پاسخ
-            میدن و نتیجه‌شون کاملاً قابل اعتماده.
+            میدهن و نتیجه‌شون کاملاً قابل اعتماده.
           </p>
         </div>
         <div className="flex items-start gap-2 rounded-xl border border-border bg-card/60 p-3">
