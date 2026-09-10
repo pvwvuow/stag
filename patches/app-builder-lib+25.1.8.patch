@@ -1,0 +1,19 @@
+diff --git a/node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js b/node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js
+index e79c555..d69a773 100644
+--- a/node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js
++++ b/node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js
+@@ -343,9 +343,13 @@ class NsisTarget extends core_1.Target {
+                 }
+             }
+         }
+-        else {
++        else if (process.platform === "win32") {
+             await (0, wine_1.execWine)(installerPath, null, [], { env: { __COMPAT_LAYER: "RunAsInvoker" } });
+         }
++        else {
++            // Linux/macOS build host: extract the uninstaller in pure JS (no wine required)
++            await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
++        }
+         await packager.sign(uninstallerPath);
+         delete defines.BUILD_UNINSTALLER;
+         // platform-specific path, not wine
