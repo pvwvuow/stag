@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { GAME_PRESETS, getPreset, domainHosts, criticalHosts, primaryProbeHost } from "@/lib/games";
+import { makeT, dirOf, LANG_KEY, type Lang, type TFn } from "@/lib/i18n";
 import { DNS_CATALOG, type DnsGroup, type Reachability } from "@/lib/dns-catalog";
 import { apiFetch } from "@/lib/api-client";
 import { useToast } from "@/hooks/use-toast";
@@ -75,7 +76,7 @@ export interface SweepResult {
   ms: number | null;
   /** which metric `ms` actually is: real game-server TCP RTT, DNS-server
    *  TCP:53 RTT, or DNS query time */
-  msKind?: "tcp" | "server" | "dns" | null;
+  msKind?: "tcp" | "region" | "server" | "dns" | null;
   dnsMs: number | null;
   tcpMs: number | null;
   tcpOk: boolean | null;
@@ -275,6 +276,11 @@ function loadState(): StagState {
 interface StagContextValue extends StagState {
   view: ViewId;
   setView: (v: ViewId) => void;
+  /* beta.5 — UI language (fa/en) + translator + direction */
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  t: TFn;
+  dir: "rtl" | "ltr";
   sweeping: boolean;
   sweepResults: Record<string, SweepResult>; // keyed by IP
   history: HistoryPoint[];
@@ -349,12 +355,42 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     bps: 0,
     error: null,
   });
+  const [lang, setLangState] = useState<Lang>("fa");
   const hydrateRef = useRef(false);
 
   useEffect(() => {
     if (hydrateRef.current) return;
     hydrateRef.current = true;
     setState(loadState());
+    try {
+      const saved = localStorage.getItem(LANG_KEY);
+      if (saved === "en" || saved === "fa") setLangState(saved);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  const t = useMemo(() => makeT(lang), [lang]);
+  const dir = useMemo(() => dirOf(lang), [lang]);
+
+  /**
+   * beta.5 — switch the whole UI language. Persisted locally; mirrored into
+   * the Electron main process so the tray menu flips with it.
+   */
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    try {
+      localStorage.setItem(LANG_KEY, l);
+    } catch {
+      /* noop */
+    }
+    document.documentElement.lang = l === "fa" ? "fa" : "en";
+    document.documentElement.dir = dirOf(l);
+    try {
+      void window.electronAPI?.setLang?.(l);
+    } catch {
+      /* browser mode / older bridge */
+    }
   }, []);
 
   useEffect(() => {
@@ -373,7 +409,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       if (id.startsWith("custom:")) {
         const ip = id.slice(7);
         if (!state.customServers.includes(ip)) return null;
-        return { id, name: "سرور دلخواه", latin: ip, cc: "ir", ips: [ip], custom: true };
+        return { id, name: lang === "en" ? "Custom server" : "سرور دلخواه", latin: ip, cc: "ir", ips: [ip], custom: true };
       }
       const e = DNS_CATALOG.find((x) => x.id === id);
       if (!e) return null;
@@ -388,7 +424,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         reach: e.reach,
       };
     },
-    [state.customServers],
+    [state.customServers, lang],
   );
 
   const services = useMemo(
@@ -475,7 +511,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       .map((id) => metaFor(id))
       .filter(Boolean) as ServiceMeta[];
     if (metas.length === 0) {
-      toast({ title: "هیچ سرویسی فعال نیست", description: "از بخش سرورها حداقل یک DNS اضافه کن." });
+      toast({ title: t("toast.noServices"), description: t("toast.noServicesDesc") });
       return;
     }
     const game = getPreset(state.gameId);
@@ -526,14 +562,27 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       if (best) {
         const bMeta = metaFor(best.id);
         setState((s) => ({ ...s, selectedService: best.id }));
-        toast({
-          title: "بهترین DNS پیدا شد",
-          description: `${bMeta?.name ?? best.id} با ${best.ms} میلی‌ثانیه — پینگ واقعی برای ${game ? game.name : "اینترنت"}`,
-        });
+        // beta.5 honesty: only a game-server TCP RTT may be called "real ping
+        // for the game". A DNS-RTT winner is said as such, never dressed up.
+        if (bestKind === "tcp") {
+          toast({
+            title: t("toast.bestFound"),
+            description: t("toast.bestFoundDesc", {
+              name: bMeta?.name ?? best.id,
+              ms: best.ms,
+              game: game ? game.name : t("dash.custom"),
+            }),
+          });
+        } else {
+          toast({
+            title: t("toast.bestFound"),
+            description: t("toast.bestFoundDnsDesc", { name: bMeta?.name ?? best.id, ms: best.ms }),
+          });
+        }
       } else {
         toast({
-          title: "هیچ سروری پاسخ نداد",
-          description: "اتصال اینترنت یا فایروال پورت ۵۳ را چک کن.",
+          title: t("toast.noneAnswered"),
+          description: t("toast.noneAnsweredDesc"),
         });
       }
       setSweeping(false);
@@ -555,7 +604,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           (d: {
             ok?: boolean;
             ms?: number | null;
-            msKind?: "tcp" | "server" | "dns" | null;
+            msKind?: "tcp" | "region" | "server" | "dns" | null;
             dnsMs?: number | null;
             tcpMs?: number | null;
             tcpOk?: boolean | null;
@@ -593,7 +642,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           });
         });
     });
-  }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, toast]);
+  }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, t, toast]);
 
   /* ------------------------ full game test ----------------------- */
 
@@ -601,14 +650,14 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     if (fullTest.inProgress) return;
     const game = getPreset(state.gameId);
     if (!game) {
-      toast({ title: "اول یک بازی انتخاب کن", description: "از همین بخش یک بازی انتخاب کن." });
+      toast({ title: t("toast.pickGame"), description: t("toast.pickGameDesc") });
       return;
     }
     const metas = state.activeServices
       .map((id) => metaFor(id))
       .filter(Boolean) as ServiceMeta[];
     if (metas.length === 0) {
-      toast({ title: "هیچ سرویسی فعال نیست", description: "از بخش سرورها حداقل یک DNS اضافه کن." });
+      toast({ title: t("toast.noServices"), description: t("toast.noServicesDesc") });
       return;
     }
     const order = metas.flatMap((m) => m.ips.map((ip) => ({ ip, sid: m.id })));
@@ -664,7 +713,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           });
         });
     });
-  }, [fullTest.inProgress, state.activeServices, state.gameId, state.tcpEnabled, metaFor, toast]);
+  }, [fullTest.inProgress, state.activeServices, state.gameId, state.tcpEnabled, metaFor, t, toast]);
 
   const bestService = useMemo(() => {
     let best: { id: string; ms: number } | null = null;
@@ -703,7 +752,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         setDnsSys((s) => ({
           ...s,
           loaded: true,
-          error: d.error ?? "خطا در تشخیص وضعیت",
+          error: d.error ?? t("toast.error"),
           elevated: d.elevated ?? s.elevated,
           platform: d.platform ?? s.platform,
         }));
@@ -742,9 +791,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         platform,
       });
     } catch {
-      setDnsSys((s) => ({ ...s, loaded: true, error: "ارتباط با هسته برقرار نشد" }));
+      setDnsSys((s) => ({ ...s, loaded: true, error: t("toast.coreDown") }));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refreshDns();
@@ -804,15 +853,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       const target =
         serviceId ?? state.selectedService ?? bestService?.id ?? state.activeServices[0] ?? null;
       if (!target) {
-        toast({ title: "سرویسی برای وصل کردن نیست", description: "اول از بخش سرورها یک DNS فعال کن." });
+        toast({ title: t("toast.nothingToConnect"), description: t("toast.nothingToConnectDesc") });
         return;
       }
       const meta = metaFor(target);
       if (!meta) return;
       if (!dnsSys.supported) {
         toast({
-          title: "پشتیبانی نمی‌شود",
-          description: `تغییر DNS سیستم در این محیط (${dnsSys.platform ?? "نامشخص"}) فعال نیست. اگر روی ویندوز هستی، از بخش درباره لاگ را کپی کن و بفرست.`,
+          title: t("toast.unsupported"),
+          description: t("toast.unsupportedDesc", { p: dnsSys.platform ?? t("dash.custom") }),
           variant: "destructive",
         });
         return;
@@ -831,8 +880,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           await refreshDnsBurst();
           setState((s) => ({ ...s, selectedService: meta.id }));
           toast({
-            title: "DNS وصل شد",
-            description: `${meta.name} روی سیستم فعال شد — کش DNS هم پاک شد.`,
+            title: t("toast.applied"),
+            description: t("toast.appliedDesc", { name: meta.name }),
           });
           // verify real connectivity through the new DNS. Pass the fresh system
           // servers so the probe resolves through the NEW DNS, not a stale one (3.1).
@@ -844,13 +893,13 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             }).then((x) => x.json());
             if (c?.ok) {
               toast({
-                title: "اتصال سالمه",
-                description: `پاسخ از DNS جدید: ${c.ms} میلی‌ثانیه`,
+                title: t("toast.netOk"),
+                description: t("toast.netOkDesc", { ms: c.ms ?? "?" }),
               });
             } else {
               toast({
-                title: "هشدار",
-                description: "DNS ست شد ولی اینترنت جواب نداد — اینترنت یا فایروال را چک کن.",
+                title: t("toast.warn"),
+                description: t("toast.appliedNoNet"),
                 variant: "destructive",
               });
             }
@@ -860,26 +909,26 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         } else {
           await refreshDns();
           toast({
-            title: "وصل نشد",
-            description: d.error ?? "دسترسی مدیر (UAC) لازم است.",
+            title: t("toast.connectFailed"),
+            description: d.error ?? t("toast.uacNeeded"),
             variant: "destructive",
           });
         }
       } catch {
-        toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
+        toast({ title: t("toast.error"), description: t("toast.coreDown"), variant: "destructive" });
       } finally {
         setDnsAction(null);
       }
     },
-    [dnsAction, state.selectedService, state.activeServices, bestService, metaFor, dnsSys.supported, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast],
+    [dnsAction, state.selectedService, state.activeServices, bestService, metaFor, dnsSys.supported, t, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast],
   );
 
   const disconnectDns = useCallback(async () => {
     if (dnsAction) return;
     if (!dnsSys.supported) {
       toast({
-        title: "پشتیبانی نمی‌شود",
-        description: `تغییر DNS سیستم در این محیط (${dnsSys.platform ?? "نامشخص"}) فعال نیست. اگر روی ویندوز هستی، از بخش درباره لاگ را کپی کن و بفرست.`,
+        title: t("toast.unsupported"),
+        description: t("toast.unsupportedDesc", { p: dnsSys.platform ?? t("dash.custom") }),
         variant: "destructive",
       });
       return;
@@ -898,10 +947,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         await refreshDnsBurst();
         const restoredManual = d.restored === "static";
         toast({
-          title: "DNS خاموش شد",
-          description: restoredManual
-            ? "DNS سیستم به تنظیمات دستی قبلی‌ات برگشت — کش هم پاک شد."
-            : "DNS سیستم به حالت خودکار (DHCP) برگشت — کش هم پاک شد.",
+          title: t("toast.turnedOff"),
+          description: restoredManual ? t("toast.offStaticDesc") : t("toast.offDhcpDesc"),
         });
         // 3.5 — prove the change actually took effect: probe through the CURRENT
         // system DNS (freshly read) instead of just showing a toast blindly.
@@ -913,13 +960,13 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           }).then((x) => x.json())) as { ok?: boolean; ms?: number | null };
           if (c?.ok) {
             toast({
-              title: "قطع تأیید شد",
-              description: `اینترنت از طریق DNS جدید سیستم جواب می‌دهد: ${c.ms} میلی‌ثانیه`,
+              title: t("toast.offConfirmed"),
+              description: t("toast.offConfirmedDesc", { ms: c.ms ?? "?" }),
             });
           } else {
             toast({
-              title: "هشدار",
-              description: "DNS خاموش شد ولی اینترنت جواب نداد — اتصال یا فایروال را چک کن.",
+              title: t("toast.warn"),
+              description: t("toast.offNoNet"),
               variant: "destructive",
             });
           }
@@ -929,17 +976,17 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       } else {
         await refreshDns();
         toast({
-          title: "خاموش نشد",
-          description: d.error ?? "دسترسی مدیر (UAC) لازم است.",
+          title: t("toast.offFailed"),
+          description: d.error ?? t("toast.uacNeeded"),
           variant: "destructive",
         });
       }
     } catch {
-      toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
+      toast({ title: t("toast.error"), description: t("toast.coreDown"), variant: "destructive" });
     } finally {
       setDnsAction(null);
     }
-  }, [dnsAction, dnsSys.supported, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast]);
+  }, [dnsAction, dnsSys.supported, t, refreshDns, refreshDnsBurst, clearBrowserDnsCache, fetchSystemServers, toast]);
 
   const flushDns = useCallback(async () => {
     setDnsAction("flush");
@@ -953,15 +1000,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       if (d.ok) await clearBrowserDnsCache();
       toast(
         d.ok
-          ? { title: "کش DNS پاک شد", description: "حالا آدرس‌ها دوباره از DNS فعالی گرفته می‌شن." }
-          : { title: "پاک نشد", description: d.error ?? "خطای نامشخص", variant: "destructive" },
+          ? { title: t("toast.flushed"), description: t("toast.flushedDesc") }
+          : { title: t("toast.flushFailed"), description: d.error ?? t("toast.error"), variant: "destructive" },
       );
     } catch {
-      toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
+      toast({ title: t("toast.error"), description: t("toast.coreDown"), variant: "destructive" });
     } finally {
       setDnsAction(null);
     }
-  }, [clearBrowserDnsCache, toast]);
+  }, [clearBrowserDnsCache, t, toast]);
 
   const checkConnection = useCallback(async () => {
     try {
@@ -972,20 +1019,20 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       }).then((x) => x.json())) as { ok?: boolean; ms?: number | null; domain?: string };
       if (d?.ok) {
         toast({
-          title: "اینترنت وصل است",
-          description: `پاسخ ${d.domain} از طریق DNS سیستم: ${d.ms} میلی‌ثانیه`,
+          title: t("toast.netUp"),
+          description: t("toast.netUpDesc", { domain: d.domain ?? "", ms: d.ms ?? "?" }),
         });
       } else {
         toast({
-          title: "اینترنت جواب نمی‌دهد",
-          description: "DNS فعلی یا مسیر اینترنت مشکل دارد.",
+          title: t("toast.netDown"),
+          description: t("toast.netDownDesc"),
           variant: "destructive",
         });
       }
     } catch {
-      toast({ title: "خطا", description: "ارتباط با هسته برقرار نشد.", variant: "destructive" });
+      toast({ title: t("toast.error"), description: t("toast.coreDown"), variant: "destructive" });
     }
-  }, [dnsSys.primary, toast]);
+  }, [dnsSys.primary, t, toast]);
 
   /* ------------------ kill-switch health watch (فاز ۸) ------------------ */
   /**
@@ -1021,7 +1068,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         if (d?.ok) {
           if (healthFailRef.current >= 3) {
             // recovered while we were already warning
-            toast({ title: "اتصال برگشت", description: "DNS فعلی دوباره جواب می‌دهد." });
+            toast({ title: t("toast.recovered"), description: t("toast.recoveredDesc") });
           }
           healthFailRef.current = 0;
           setDnsUnhealthy(false);
@@ -1030,8 +1077,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           if (healthFailRef.current === 3) {
             setDnsUnhealthy(true);
             toast({
-              title: "DNS فعلی جواب نمی‌دهد",
-              description: "۳ بار پشت‌سرهم پاسخی نرسید — DNS دیگری امتحان کن یا خاموشش کن.",
+              title: t("toast.dnsDead"),
+              description: t("toast.dnsDeadDesc"),
               variant: "destructive",
             });
           }
@@ -1052,7 +1099,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       clearInterval(iv);
       clearTimeout(kickoff);
     };
-  }, [dnsSys.on, dnsSys.primary, dnsAction, toast]);
+  }, [dnsSys.on, dnsSys.primary, dnsAction, t, toast]);
 
   /* ----------------------- in-app updates ------------------------ */
 
@@ -1077,8 +1124,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     const api = window.electronAPI?.updater;
     if (!api) {
       toast({
-        title: "فقط در نسخه دسکتاپ",
-        description: "بروزرسانی خودکار مخصوص برنامه ویندوزی STAG است.",
+        title: t("toast.desktopOnly"),
+        description: t("toast.desktopOnlyDesc"),
       });
       return;
     }
@@ -1086,9 +1133,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       const s = await api.check();
       setUpdate(s);
     } catch {
-      setUpdate((u) => ({ ...u, status: "error", error: "بررسی بروزرسانی ممکن نشد" }));
+      setUpdate((u) => ({ ...u, status: "error", error: t("toast.checkFailed") }));
     }
-  }, [toast]);
+  }, [t, toast]);
 
   const downloadUpdate = useCallback(async () => {
     const api = window.electronAPI?.updater;
@@ -1097,9 +1144,9 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       const s = await api.download();
       setUpdate(s);
     } catch {
-      setUpdate((u) => ({ ...u, status: "error", error: "دانلود بروزرسانی شروع نشد" }));
+      setUpdate((u) => ({ ...u, status: "error", error: t("toast.dlFailed") }));
     }
-  }, []);
+  }, [t]);
 
   const installUpdate = useCallback(() => {
     window.electronAPI?.updater?.install();
@@ -1114,22 +1161,26 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     try {
       await window.electronAPI?.relaunchElevated?.();
       toast({
-        title: "راه‌اندازی مجدد با دسترسی مدیر",
-        description: "پنجره تأیید (UAC) را تأیید کن تا STAG با دسترسی مدیر دوباره بالا بیاید.",
+        title: t("toast.relaunching"),
+        description: t("toast.relaunchingDesc"),
       });
     } catch {
       toast({
-        title: "اجرا نشد",
-        description: "راه‌اندازی مجدد با دسترسی مدیر ممکن نشد.",
+        title: t("toast.relaunchFailed"),
+        description: t("toast.relaunchFailedDesc"),
         variant: "destructive",
       });
     }
-  }, [toast]);
+  }, [t, toast]);
 
   const value: StagContextValue = {
     ...state,
     view,
     setView,
+    lang,
+    setLang,
+    t,
+    dir,
     sweeping,
     sweepResults,
     history,

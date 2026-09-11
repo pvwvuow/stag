@@ -32,6 +32,8 @@ export interface ElectronApi {
   }) => Promise<{ ok: boolean; autostartActive?: boolean | null; error?: string }>;
   getLogs: () => Promise<{ ok: boolean; logs?: string; error?: string }>;
   retryServer: () => Promise<{ ok: boolean; error?: string }>;
+  /** beta.5 — UI language switch (rebuilds the tray menu labels) */
+  setLang?: (lang: "fa" | "en") => Promise<boolean>;
   /** beta.4 — Windows elevation state + one-click UAC relaunch */
   getElevation?: () => Promise<{ elevated: boolean; platform: string }>;
   relaunchElevated?: () => Promise<{ ok: boolean; error?: string }>;

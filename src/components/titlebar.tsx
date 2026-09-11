@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Sun, Moon, Minus, Square, Copy, X } from "lucide-react";
+import { useStag } from "@/components/stag-store";
 
 const THEME_KEY = "stag.theme";
 export type Theme = "dark" | "light";
@@ -47,6 +48,7 @@ function WinButton({
  * controls (right side, like the reference mock). Full strip is a drag region.
  */
 export function WindowStrip() {
+  const st = useStag();
   const [isDesktop, setIsDesktop] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [theme, setTheme] = useState<Theme>("light");
@@ -81,8 +83,8 @@ export function WindowStrip() {
       <div className="flex items-center gap-1">
         <button
           onClick={toggleTheme}
-          aria-label={theme === "dark" ? "حالت روز" : "حالت شب"}
-          title={theme === "dark" ? "حالت روز (سفید)" : "حالت شب (سیاه)"}
+          aria-label={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+          title={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
           className="app-no-drag flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
         >
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -91,16 +93,16 @@ export function WindowStrip() {
         {isDesktop && window.electronAPI && (
           <>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-            <WinButton onClick={() => window.electronAPI!.minimize()} label="کمینه">
+            <WinButton onClick={() => window.electronAPI!.minimize()} label={st.t("title.min")}>
               <Minus className="h-4 w-4" />
             </WinButton>
             <WinButton
               onClick={() => window.electronAPI!.maximizeToggle()}
-              label={maximized ? "بازگردانی اندازه" : "بیشینه"}
+              label={maximized ? st.t("title.restore") : st.t("title.max")}
             >
               {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
             </WinButton>
-            <WinButton onClick={() => window.electronAPI!.close()} label="بستن" danger>
+            <WinButton onClick={() => window.electronAPI!.close()} label={st.t("title.close")} danger>
               <X className="h-4 w-4" />
             </WinButton>
           </>

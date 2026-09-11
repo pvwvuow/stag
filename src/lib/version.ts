@@ -6,4 +6,4 @@
  * app, `window.electronAPI.getVersion()` returns the real Electron version
  * and is always preferred; this constant is the browser/dev fallback.
  */
-export const APP_VERSION = "1.4.0-beta.4";
+export const APP_VERSION = "1.4.0-beta.5";

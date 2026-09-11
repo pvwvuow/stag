@@ -43,6 +43,7 @@ function fmtBytes(n: number): string {
 
 export function SettingsView() {
   const st = useStag();
+  const t = st.t;
   const { toast } = useToast();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isDesktop, setIsDesktop] = useState(false);
@@ -86,25 +87,24 @@ export function SettingsView() {
       <div>
         <h1 className="flex items-center gap-2 text-lg font-black">
           <Settings className="h-5 w-5 text-primary" />
-          تنظیمات
+          {t("set.title")}
         </h1>
-        <p className="mt-1 text-xs text-muted-foreground">شخصی‌سازی رفتار STAG — همه‌چیز همین‌جا ذخیره میشه.</p>
+        <p className="mt-1 text-xs text-muted-foreground">{t("set.subtitle")}</p>
       </div>
 
       {/* in-app updates */}
       <section className="panel p-4">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-bold">
           <PackageCheck className="h-4 w-4 text-primary" />
-          بروزرسانی برنامه
+          {t("set.updates")}
         </h2>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          آپدیت فقط بخش‌های تغییرکرده را دانلود می‌کند (نه کل برنامه) — بعد از دانلود، با یک
-          راه‌اندازی مجدد نصب می‌شود.
+          {t("set.updatesDesc")}
         </p>
 
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground">
-            نسخه فعلی: <span className="ltr font-mono text-foreground">{version}</span>
+            {t("set.currentVer")} <span className="ltr font-mono text-foreground">{version}</span>
           </span>
 
           {u.status === "idle" && (
@@ -114,28 +114,28 @@ export function SettingsView() {
               className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90 disabled:opacity-40"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              بررسی بروزرسانی
+              {t("set.check")}
             </button>
           )}
 
           {u.status === "checking" && (
             <span className="flex items-center gap-2 rounded-full bg-muted/70 px-4 py-2 text-xs font-bold text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              در حال بررسی...
+              {t("set.checking")}
             </span>
           )}
 
           {u.status === "available" && (
             <>
               <span className="rounded-full bg-primary/10 px-3 py-1.5 text-[11px] font-black text-primary">
-                نسخه <span className="ltr font-mono">{u.version}</span> موجوده
+                {t("set.avail", { v: u.version ?? "" })}
               </span>
               <button
                 onClick={st.downloadUpdate}
                 className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
               >
                 <Download className="h-3.5 w-3.5" />
-                دانلود آپدیت
+                {t("set.download")}
               </button>
             </>
           )}
@@ -143,7 +143,7 @@ export function SettingsView() {
           {u.status === "downloading" && (
             <div className="min-w-56 flex-1">
               <div className="mb-1 flex items-center justify-between text-[10px] font-bold text-muted-foreground">
-                <span>در حال دانلود... %{u.percent}</span>
+                <span>{t("set.downloading", { p: u.percent })}</span>
                 <span className="ltr">
                   {fmtBytes(u.transferred)} / {fmtBytes(u.total)} · {fmtBytes(u.bps)}/s
                 </span>
@@ -160,14 +160,14 @@ export function SettingsView() {
           {u.status === "ready" && (
             <>
               <span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
-                نسخه <span className="ltr font-mono">{u.version}</span> آماده نصبه
+                {t("set.ready", { v: u.version ?? "" })}
               </span>
               <button
                 onClick={st.installUpdate}
                 className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition-opacity hover:bg-emerald-600/90"
               >
                 <RotateCw className="h-3.5 w-3.5" />
-                نصب و راه‌اندازی مجدد
+                {t("set.install")}
               </button>
             </>
           )}
@@ -175,9 +175,7 @@ export function SettingsView() {
           {(u.status === "error" || u.status === "unsupported") && (
             <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
               <AlertCircle className="h-3.5 w-3.5" />
-              {isPortable
-                ? "نسخه پرتابل آپدیت خودکار نداره"
-                : "بروزرسانی خودکار فعلاً در دسترس نیست"}
+              {isPortable ? t("set.noAutoPortable") : t("set.noAuto")}
             </span>
           )}
         </div>
@@ -188,14 +186,14 @@ export function SettingsView() {
             className="mt-3 flex items-center gap-1.5 text-[11px] font-bold text-primary hover:underline"
           >
             <ExternalLink className="h-3 w-3" />
-            دانلود دستی از صفحه Releases گیت‌هاب
+            {t("set.manualDl")}
           </button>
         )}
 
         {u.status === "ready" && u.delta && (
           <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            دانلود اختلافی: فقط {fmtBytes(u.transferred)} از {fmtBytes(u.total)} دانلود شد — نه کل برنامه.
+            {t("set.deltaDone", { x: fmtBytes(u.transferred), y: fmtBytes(u.total) })}
           </p>
         )}
       </section>
@@ -204,23 +202,22 @@ export function SettingsView() {
       <section className="panel p-4">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-bold">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          دسترسی سیستم
+          {t("set.elevation")}
         </h2>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          تغییر DNS ویندوز به دسترسی مدیر نیاز دارد. اگر STAG با دسترسی مدیر اجرا شود، دکمه روشن/خاموش
-          بدون پنجره UAC و فوری کار می‌کند.
+          {t("set.elevationDesc")}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           {st.dnsSys.elevated ? (
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
               <ShieldCheck className="h-3.5 w-3.5" />
-              اجرا با دسترسی مدیر — تغییر DNS فوری است
+              {t("set.elevated")}
             </span>
           ) : (
             <>
               <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
                 <ShieldAlert className="h-3.5 w-3.5" />
-                بدون دسترسی مدیر — هر تغییر DNS یک تأیید UAC می‌خواهد
+                {t("set.notElevated")}
               </span>
               {isDesktop && (
                 <button
@@ -228,7 +225,7 @@ export function SettingsView() {
                   className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
                 >
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  اجرای مجدد به‌عنوان مدیر
+                  {t("set.relaunchElevated")}
                 </button>
               )}
             </>
@@ -236,9 +233,47 @@ export function SettingsView() {
         </div>
       </section>
 
+      {/* language — beta.5 */}
+      <section className="panel p-4">
+        <h2 className="mb-1 text-sm font-bold">{t("set.langSection")}</h2>
+        <p className="mb-3 text-[11px] text-muted-foreground">{t("set.langSub")}</p>
+        <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+          <button
+            onClick={() => st.setLang("fa")}
+            className={`flex items-center gap-3 rounded-[22px] p-3 text-start transition-colors ${
+              st.lang === "fa" ? "bg-primary/[0.09] ring-2 ring-primary/70" : "bg-muted/50 hover:bg-muted/70"
+            }`}
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-lg font-black text-primary">
+              فا
+            </span>
+            <span>
+              <span className="block text-sm font-bold">فارسی</span>
+              <span className="block text-[10px] text-muted-foreground" dir="ltr">
+                Persian
+              </span>
+            </span>
+          </button>
+          <button
+            onClick={() => st.setLang("en")}
+            className={`flex items-center gap-3 rounded-[22px] p-3 text-start transition-colors ${
+              st.lang === "en" ? "bg-primary/[0.09] ring-2 ring-primary/70" : "bg-muted/50 hover:bg-muted/70"
+            }`}
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-lg font-black text-primary">
+              EN
+            </span>
+            <span>
+              <span className="block text-sm font-bold">English</span>
+              <span className="block text-[10px] text-muted-foreground">انگلیسی</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
       {/* theme */}
       <section className="panel p-4">
-        <h2 className="mb-3 text-sm font-bold">ظاهر برنامه</h2>
+        <h2 className="mb-3 text-sm font-bold">{t("set.appearance")}</h2>
         <div className="grid grid-cols-2 gap-3 sm:max-w-md">
           <button
             onClick={() => applyTheme("light")}
@@ -250,8 +285,8 @@ export function SettingsView() {
               <Sun className="h-5 w-5" />
             </span>
             <span>
-              <span className="block text-sm font-bold">حالت روز</span>
-              <span className="block text-[10px] text-muted-foreground">سفید + فیروزه‌ای</span>
+              <span className="block text-sm font-bold">{t("set.light")}</span>
+              <span className="block text-[10px] text-muted-foreground">{t("set.lightSub")}</span>
             </span>
           </button>
           <button
@@ -264,8 +299,8 @@ export function SettingsView() {
               <Moon className="h-5 w-5" />
             </span>
             <span>
-              <span className="block text-sm font-bold">حالت شب</span>
-              <span className="block text-[10px] text-muted-foreground">مشکی + فیروزه‌ای</span>
+              <span className="block text-sm font-bold">{t("set.dark")}</span>
+              <span className="block text-[10px] text-muted-foreground">{t("set.darkSub")}</span>
             </span>
           </button>
         </div>
@@ -274,54 +309,48 @@ export function SettingsView() {
       {/* desktop behaviour — only in the packaged app */}
       {isDesktop && (
         <section className="panel p-4">
-          <h2 className="mb-3 text-sm font-bold">رفتار دسکتاپ</h2>
+          <h2 className="mb-3 text-sm font-bold">{t("set.desktop")}</h2>
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <PanelBottom className="h-3.5 w-3.5 text-primary" />
-                آیکون در سیستم‌تری (کنار ساعت)
+                {t("set.tray")}
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                با راست‌کلیک روی آیکون، نمایش/خروج داره
-              </p>
+              <p className="text-[11px] text-muted-foreground">{t("set.traySub")}</p>
             </div>
             <Switch
               checked={prefs.tray}
               onCheckedChange={(v) => updatePrefs({ tray: v, ...(v ? {} : { closeToTray: false }) })}
-              aria-label="آیکون سیستم‌تری"
+              aria-label={t("set.trayAria")}
             />
           </div>
           <div className="mt-3 flex items-center justify-between gap-4 pt-3 hairline">
             <div>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <Power className="h-3.5 w-3.5 text-primary" />
-                بستن پنجره = رفتن به تری
+                {t("set.closeToTray")}
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                به‌جای خروج، برنامه مخفی می‌مونه و پایش ادامه داره (نیاز به تری)
-              </p>
+              <p className="text-[11px] text-muted-foreground">{t("set.closeToTraySub")}</p>
             </div>
             <Switch
               checked={prefs.closeToTray}
               disabled={!prefs.tray}
               onCheckedChange={(v) => updatePrefs({ closeToTray: v })}
-              aria-label="بستن به تری"
+              aria-label={t("set.closeTrayAria")}
             />
           </div>
           <div className="mt-3 flex items-center justify-between gap-4 pt-3 hairline">
             <div>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <Rocket className="h-3.5 w-3.5 text-primary" />
-                اجرای خودکار با ویندوز
+                {t("set.autostart")}
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                بعد از روشن‌شدن سیستم، STAG خودش بالا میاد
-              </p>
+              <p className="text-[11px] text-muted-foreground">{t("set.autostartSub")}</p>
             </div>
             <Switch
               checked={prefs.autostart}
               onCheckedChange={(v) => updatePrefs({ autostart: v })}
-              aria-label="اجرای خودکار با ویندوز"
+              aria-label={t("set.autostartAria")}
             />
           </div>
         </section>
@@ -332,22 +361,18 @@ export function SettingsView() {
 
       {/* test options */}
       <section className="panel p-4">
-        <h2 className="mb-3 text-sm font-bold">گزینه‌های تست</h2>
+        <h2 className="mb-3 text-sm font-bold">{t("set.testOptions")}</h2>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium">تست پورت‌های TCP بازی</p>
-            <p className="text-[11px] text-muted-foreground">
-              در تست کامل، علاوه بر DNS، پورت‌های آنلاین بازی هم چک میشه (کمی طولانی‌تر)
-            </p>
+            <p className="text-sm font-medium">{t("set.tcpPorts")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("set.tcpPortsSub")}</p>
           </div>
-          <Switch checked={st.tcpEnabled} onCheckedChange={st.setTcpEnabled} aria-label="تست TCP" />
+          <Switch checked={st.tcpEnabled} onCheckedChange={st.setTcpEnabled} aria-label={t("set.tcpAria")} />
         </div>
         <div className="mt-3 flex items-center justify-between gap-4 pt-3 hairline">
           <div>
-            <p className="text-sm font-medium">سقف سرویس‌های فعال</p>
-            <p className="text-[11px] text-muted-foreground">
-              حداکثر {MAX_SERVICES} سرویس DNS به‌صورت همزمان — هر سرویس با هر دو آی‌پی خودش تست می‌شود
-            </p>
+            <p className="text-sm font-medium">{t("set.maxServices")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("set.maxServicesSub", { n: MAX_SERVICES })}</p>
           </div>
           <CountChip>{MAX_SERVICES}</CountChip>
         </div>
@@ -355,10 +380,9 @@ export function SettingsView() {
 
       {/* data */}
       <section className="panel p-4">
-        <h2 className="mb-1 text-sm font-bold">داده‌ها</h2>
+        <h2 className="mb-1 text-sm font-bold">{t("set.data")}</h2>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          لیست سرورها، بازی انتخابی و تنظیمات به‌صورت محلی ذخیره میشن. با پاک‌کردن، همه‌چیز به حالت
-          اول برمی‌گرده.
+          {t("set.dataDesc")}
         </p>
         <button
           onClick={() => {
@@ -369,12 +393,12 @@ export function SettingsView() {
             } catch {
               /* noop */
             }
-            toast({ title: "پاک شد", description: "برای اعمال، برنامه را دوباره باز کن." });
+            toast({ title: t("set.resetDone"), description: t("set.resetDoneDesc") });
           }}
           className="flex items-center gap-2 rounded-full bg-rose-500/10 px-4 py-2 text-sm font-bold text-rose-600 transition-colors hover:bg-rose-500/20 dark:text-rose-400"
         >
           <Trash2 className="h-4 w-4" />
-          بازنشانی داده‌ها
+          {t("set.reset")}
         </button>
       </section>
 
@@ -382,16 +406,16 @@ export function SettingsView() {
       <section className="panel p-4">
         <h2 className="mb-2 flex items-center gap-2 text-sm font-bold">
           <Monitor className="h-4 w-4 text-primary" />
-          وضعیت اجرا
+          {t("set.runtime")}
         </h2>
         <ul className="space-y-1.5 text-xs text-muted-foreground">
           <li className="flex items-center gap-2">
             <Info className="h-3 w-3" />
-            حالت: {isDesktop ? "دسکتاپ (Electron) — تست از اینترنت خودت" : "مرورگر — تست از سرور این صفحه"}
+            {t("set.mode")} {isDesktop ? t("set.modeDesktop") : t("set.modeBrowser")}
           </li>
           <li className="flex items-center gap-2">
             <Info className="h-3 w-3" />
-            نسخه: <span className="ltr font-mono">{version}</span>
+            {t("set.version")} <span className="ltr font-mono">{version}</span>
           </li>
         </ul>
       </section>
@@ -417,6 +441,7 @@ type CheckState = "idle" | "running" | "pass" | "fail";
 
 function Troubleshooter() {
   const st = useStag();
+  const t = st.t;
   const [dnsPort, setDnsPort] = useState<CheckState>("idle");
   const [internet, setInternet] = useState<CheckState>("idle");
   const [httpsPath, setHttpsPath] = useState<CheckState>("idle");
@@ -496,21 +521,21 @@ function Troubleshooter() {
   const rows: Array<{ s: CheckState; title: string; hint: string; failHint: string }> = [
     {
       s: dnsPort,
-      title: "پورت DNS (UDP 53) باز است؟",
-      hint: "کوئری مستقیم به یک DNS عمومی",
-      failHint: "فایروال/آنتی‌ویروس یا اپراتور پورت ۵۳ را بسته — STAG نمی‌تواند DNSها را تست کند.",
+      title: t("set.chkDnsPort"),
+      hint: t("set.chkDnsPortHint"),
+      failHint: t("set.chkDnsPortFail"),
     },
     {
       s: internet,
-      title: "اینترنت از DNS فعلی جواب می‌دهد؟",
-      hint: "کوئری از مسیر DNS سیستم",
-      failHint: "DNS فعلی یا مسیر اینترنت مشکل دارد — DNS دیگری وصل کن یا خاموشش کن.",
+      title: t("set.chkInternet"),
+      hint: t("set.chkInternetHint"),
+      failHint: t("set.chkInternetFail"),
     },
     {
       s: httpsPath,
-      title: "پورت ۴۴۳ (HTTPS) در دسترس است؟",
-      hint: "دست‌دادن TCP به یک سایت همیشه‌در‌دسترس از ایران (دیجی‌کالا)",
-      failHint: "پورت ۴۴۳ از مسیر فعلی بسته است — فایروال/پروکسی را چک کن؛ خیلی از سرویس‌های بازی بدون ۴۴۳ بالا نمی‌آیند.",
+      title: t("set.chkHttps"),
+      hint: t("set.chkHttpsHint"),
+      failHint: t("set.chkHttpsFail"),
     },
   ];
 
@@ -519,14 +544,14 @@ function Troubleshooter() {
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-bold">
           <Stethoscope className="h-4 w-4 text-primary" />
-          عیب‌یابی سریع
+          {t("set.trouble")}
         </h2>
         <button
           onClick={runAll}
           disabled={busy}
           className="rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90 disabled:opacity-50"
         >
-          {busy ? "در حال بررسی..." : "اجرای بررسی‌ها"}
+          {busy ? t("set.checkingShort") : t("set.runChecks")}
         </button>
       </div>
       <ul className="space-y-2.5">
@@ -550,11 +575,11 @@ function Troubleshooter() {
             )}
           </span>
           <span className="min-w-0">
-            <span className="block font-bold">تغییر DNS سیستم روی این سیستم‌عامل؟</span>
+            <span className="block font-bold">{t("set.chkOs")}</span>
             <span className="block text-[11px] text-muted-foreground">
               {st.dnsSys.supported
-                ? "ویندوز — با تأیید پنجره UAC، مستقیم از داخل STAG"
-                : `در این محیط (${st.dnsSys.platform ?? "نامشخص"}) پشتیبانی نمی‌شود؛ تست پینگ روی هر سیستم‌عاملی کار می‌کند.`}
+                ? t("set.chkOsOk")
+                : t("set.chkOsFail", { p: st.dnsSys.platform ?? t("dash.custom") })}
             </span>
           </span>
         </li>

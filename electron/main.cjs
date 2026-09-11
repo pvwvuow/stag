@@ -44,6 +44,13 @@ let restartAttempts = 0;
 let tray = null;
 let trayEnabled = false;
 let closeToTray = false;
+/** beta.5 — UI language; the tray menu labels follow it. */
+let appLang = "fa";
+
+function trayLabels() {
+  const en = appLang === "en";
+  return { show: en ? "Show STAG" : "نمایش STAG", quit: en ? "Quit" : "خروج" };
+}
 /** beta.4 — set while waiting for the elevated second instance to take over. */
 let pendingElevatedRelaunch = false;
 
@@ -478,6 +485,41 @@ function trayIconPath() {
     : path.join(__dirname, "..", "build", "icon.png");
 }
 
+function buildTrayMenu() {
+  const L = trayLabels();
+  return Menu.buildFromTemplate([
+    {
+      label: L.show,
+      click: () => {
+        if (win) {
+          win.show();
+          win.focus();
+        }
+      },
+    },
+    { type: "separator" },
+    {
+      label: L.quit,
+      click: () => {
+        quitting = true;
+        killNextServer();
+        app.quit();
+      },
+    },
+  ]);
+}
+
+/** beta.5 — re-render the tray menu when the user flips the UI language. */
+function retintTray() {
+  if (!tray) return;
+  try {
+    tray.setContextMenu(buildTrayMenu());
+    logLine("info", `tray menu rebuilt for lang=${appLang}`);
+  } catch (err) {
+    logLine("error", `tray re-lang failed: ${err?.message}`);
+  }
+}
+
 function ensureTray() {
   if (tray || !trayEnabled) return;
   try {
@@ -485,28 +527,7 @@ function ensureTray() {
     if (!icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 });
     tray = new Tray(icon);
     tray.setToolTip("STAG — Lower Ping, Better Play");
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        {
-          label: "نمایش STAG",
-          click: () => {
-            if (win) {
-              win.show();
-              win.focus();
-            }
-          },
-        },
-        { type: "separator" },
-        {
-          label: "خروج",
-          click: () => {
-            quitting = true;
-            killNextServer();
-            app.quit();
-          },
-        },
-      ]),
-    );
+    tray.setContextMenu(buildTrayMenu());
     tray.on("double-click", () => {
       if (win) {
         win.show();
@@ -546,6 +567,13 @@ function registerIpc() {
   ipcMain.handle("app:get-version", () => app.getVersion());
   // فاز ۴.۲ — the renderer must attach this token to every /api call.
   ipcMain.handle("app:get-api-token", () => API_TOKEN);
+
+  // beta.5 — UI language switch from Settings; tray labels follow.
+  ipcMain.handle("app:set-lang", (_e, lang) => {
+    appLang = lang === "en" ? "en" : "fa";
+    retintTray();
+    return true;
+  });
 
   /*
    * beta.4 — Windows elevation state + one-click UAC relaunch. With admin

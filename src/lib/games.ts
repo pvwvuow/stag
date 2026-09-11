@@ -31,6 +31,8 @@ export interface GamePreset {
   latin: string;
   icon: string;
   hint: string;
+  /** English hint (beta.5 i18n) */
+  hintEn: string;
   /** Domains probed through the user's DNS, each tagged with its role/weight */
   domains: GameDomain[];
   /** TCP ports optionally probed on the first resolved IP (supplementary check) */
@@ -40,10 +42,11 @@ export interface GamePreset {
 export const GAME_PRESETS: GamePreset[] = [
   {
     id: "marvel-rivals",
-    name: "مارول رایولز",
+    name: "مارول ریولز",
     latin: "Marvel Rivals",
     icon: "img:/games/marvel-rivals.png",
     hint: "شوتر قهرمان‌محور NetEase (استیم / PS5 / Xbox)",
+    hintEn: "NetEase hero shooter (Steam / PS5 / Xbox)",
     // Critical to PLAY: NetEase service + NetEase account auth. The two
     // marvelrivals.com hosts are only the marketing site (Google Cloud).
     domains: [
@@ -60,6 +63,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Valorant",
     icon: "valorant",
     hint: "شوتر تاکتیکی Riot — سرورهای رقابتی",
+    hintEn: "Riot tactical shooter — competitive servers",
     domains: [
       { host: "auth.riotgames.com", role: "auth", critical: true },
       { host: "riotgames.com", role: "game", critical: true },
@@ -73,6 +77,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Call of Duty",
     icon: "activision",
     hint: "Warzone / MW3 / BO6 (سرویس Demonware)",
+    hintEn: "Warzone / MW3 / BO6 (Demonware service)",
     domains: [
       { host: "demonware.net", role: "game", critical: true },
       { host: "activision.com", role: "web", critical: false },
@@ -82,10 +87,11 @@ export const GAME_PRESETS: GamePreset[] = [
   },
   {
     id: "pubg",
-    name: "پی‌یوبی‌جی",
+    name: "پابجی",
     latin: "PUBG",
     icon: "pubg",
     hint: "PUBG: Battlegrounds — Krafton",
+    hintEn: "PUBG: Battlegrounds — Krafton",
     domains: [
       { host: "pubg.com", role: "game", critical: true },
       { host: "www.pubg.com", role: "web", critical: false },
@@ -98,6 +104,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Fortnite",
     icon: "fortnite",
     hint: "سرویس‌های Epic Games",
+    hintEn: "Epic Games services",
     domains: [
       { host: "account-public-service-prod03.ol.epicgames.com", role: "auth", critical: true },
       { host: "epicgames.com", role: "web", critical: false },
@@ -111,6 +118,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Counter-Strike 2",
     icon: "counterstrike",
     hint: "CS2 — مچ‌میکینگ از زیرساخت Steam",
+    hintEn: "CS2 — matchmaking on the Steam infrastructure",
     domains: [
       { host: "steamcommunity.com", role: "game", critical: true },
       { host: "counter-strike.net", role: "web", critical: false },
@@ -124,6 +132,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Dota 2",
     icon: "dota2",
     hint: "Dota 2 — Valve",
+    hintEn: "Dota 2 — Valve",
     domains: [
       { host: "api.steampowered.com", role: "game", critical: true },
       { host: "steamcommunity.com", role: "game", critical: true },
@@ -133,10 +142,11 @@ export const GAME_PRESETS: GamePreset[] = [
   },
   {
     id: "lol",
-    name: "لیگ اف لجندز",
+    name: "لیگ آو لجندز",
     latin: "League of Legends",
     icon: "leagueoflegends",
     hint: "LoL — Riot Games",
+    hintEn: "LoL — Riot Games",
     domains: [
       { host: "auth.riotgames.com", role: "auth", critical: true },
       { host: "riotgames.com", role: "game", critical: true },
@@ -150,6 +160,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "EA Sports",
     icon: "ea",
     hint: "EA FC, Battlefield، آنلاین‌های EA",
+    hintEn: "EA FC, Battlefield, EA online services",
     domains: [
       { host: "accounts.ea.com", role: "auth", critical: true },
       { host: "update.ea.com", role: "game", critical: true },
@@ -163,6 +174,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "PSN",
     icon: "playstation",
     hint: "PS4 / PS5 و استور پلی‌استیشن",
+    hintEn: "PS4 / PS5 and the PlayStation store",
     domains: [
       { host: "auth.api.sonyentertainmentnetwork.com", role: "auth", critical: true },
       { host: "store.playstation.com", role: "web", critical: false },
@@ -176,6 +188,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Xbox Live",
     icon: "xbox",
     hint: "Xbox One / Series X|S و گیم‌پس",
+    hintEn: "Xbox One / Series X|S and Game Pass",
     domains: [
       { host: "user.auth.xboxlive.com", role: "auth", critical: true },
       { host: "title.auth.xboxlive.com", role: "auth", critical: true },
@@ -190,6 +203,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Nintendo Switch",
     icon: "nintendoswitch",
     hint: "Switch و eShop",
+    hintEn: "Switch and the eShop",
     domains: [
       { host: "accounts.nintendo.com", role: "auth", critical: true },
       { host: "ctest.cdn.nintendo.net", role: "game", critical: true },
@@ -203,6 +217,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Steam",
     icon: "steam",
     hint: "استور و شبکه استیم",
+    hintEn: "Steam store and network",
     domains: [
       { host: "steamcommunity.com", role: "game", critical: true },
       { host: "api.steampowered.com", role: "game", critical: true },
@@ -216,6 +231,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Battle.net",
     icon: "battledotnet",
     hint: "Blizzard — Diablo، Overwatch، CoD PC",
+    hintEn: "Blizzard — Diablo, Overwatch, CoD PC",
     domains: [
       { host: "us.actual.battle.net", role: "game", critical: true },
       { host: "battle.net", role: "game", critical: true },
@@ -229,6 +245,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Rockstar",
     icon: "rockstargames",
     hint: "GTA Online و RDR2",
+    hintEn: "GTA Online and RDR2",
     domains: [
       { host: "prod.ros.rockstargames.com", role: "game", critical: true },
       { host: "rockstargames.com", role: "web", critical: false },
@@ -241,6 +258,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Roblox",
     icon: "roblox",
     hint: "کلاینت و سرویس احراز هویت",
+    hintEn: "Client and authentication services",
     domains: [
       { host: "auth.roblox.com", role: "auth", critical: true },
       { host: "roblox.com", role: "web", critical: false },
@@ -254,6 +272,7 @@ export const GAME_PRESETS: GamePreset[] = [
     latin: "Epic Games",
     icon: "epicgames",
     hint: "استور و اکانت Epic",
+    hintEn: "Epic store and account",
     domains: [
       { host: "account-public-service-prod03.ol.epicgames.com", role: "auth", critical: true },
       { host: "epicgames.com", role: "web", critical: false },
@@ -266,7 +285,8 @@ export const GAME_PRESETS: GamePreset[] = [
     name: "جنشین ایمپکت",
     latin: "Genshin Impact",
     icon: "img:/games/genshin.png",
-    hint: "هویورس — Genshin / HSR / ZZZ",
+    hint: "هویوورس — Genshin / HSR / ZZZ",
+    hintEn: "HoYoverse — Genshin / HSR / ZZZ",
     domains: [
       { host: "genshin.hoyoverse.com", role: "game", critical: true },
       { host: "mihoyo.com", role: "game", critical: true },
@@ -274,6 +294,21 @@ export const GAME_PRESETS: GamePreset[] = [
     ],
     tcpPorts: [443],
   },
+];
+
+/* --------------------- game-region path anchors --------------------- */
+/**
+ * beta.5 — "in-game ping" anchors. Iranian players almost always land on EU
+ * game clusters (the user's own example: Frankfurt ~130ms in-match). A TCP
+ * handshake to a GEO-PINNED cloud endpoint in the same region measures the
+ * same network path the game uses, so it is the closest honest number to the
+ * in-game ping when direct game probes are sanctions-blocked. AWS S3 regional
+ * endpoints are ideal: stable names, geo-pinned, TCP/443 always answers.
+ */
+export const REGION_ANCHORS: Array<{ city: string; cityFa: string; host: string }> = [
+  { city: "Frankfurt", cityFa: "فرانکفورت", host: "s3.eu-central-1.amazonaws.com" },
+  { city: "Paris", cityFa: "پاریس", host: "s3.eu-west-3.amazonaws.com" },
+  { city: "Stockholm", cityFa: "استکهلم", host: "s3.eu-north-1.amazonaws.com" },
 ];
 
 export function getPreset(id: string | null): GamePreset | null {

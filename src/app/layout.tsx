@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 export const metadata: Metadata = {
   title: "STAG | Lower Ping • Better Play",
   description:
-    "تستر سلامت DNS مخصوص گیم — تست همزمان چندین DNS، پیدا کردن سریع‌ترین سرور و بررسی دامنه‌ها و پورت‌های بازی، بدون باز کردن بازی.",
+    "تستر سلامت DNS مخصوص گیم — تست همزمان چندین DNS و پیدا کردن سریع‌ترین سرور | DNS health tester for gamers — test many DNS servers at once and find the fastest one.",
   icons: {
     icon: "/brand/stag.svg",
   },

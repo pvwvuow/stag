@@ -25,6 +25,9 @@ execFileSync(
     path.join(root, "node_modules", "typescript", "bin", "tsc"),
     "src/lib/verdict.ts",
     "src/lib/netsh-script.ts",
+    "src/lib/i18n.ts",
+    "src/lib/games.ts",
+    "src/lib/dns-catalog.ts",
     "--outDir",
     outDir,
     "--module",
@@ -33,14 +36,18 @@ execFileSync(
     "es2021",
     "--skipLibCheck",
     "--noEmitOnError",
+    "--moduleResolution",
+    "node",
   ],
   { cwd: root, stdio: "pipe" },
 );
 
 // 2) run the tests against the compiled CJS
 const require2 = createRequire(import.meta.url);
-const { verdictOf, isPrivateIp } = require2(path.join(outDir, "verdict.js"));
+const { verdictOf, isPrivateIp, toneHint } = require2(path.join(outDir, "verdict.js"));
 const { sanitizeAlias, buildScript, psQuote, IPV4_RE } = require2(path.join(outDir, "netsh-script.js"));
+const { DICT, makeT, dirOf } = require2(path.join(outDir, "i18n.js"));
+const { REGION_ANCHORS, GAME_PRESETS } = require2(path.join(outDir, "games.js"));
 
 let passed = 0;
 let failed = 0;
@@ -194,6 +201,48 @@ console.log("IPV4_RE:");
 check("valid v4", IPV4_RE.test("178.22.122.100") === true);
 check("octet 256 rejected", IPV4_RE.test("256.1.1.1") === false);
 check("garbage rejected", IPV4_RE.test("abc") === false);
+
+/* ------------------- beta.5: i18n parity ------------------- */
+console.log("i18n:");
+{
+  const faKeys = Object.keys(DICT.fa).sort();
+  const enKeys = Object.keys(DICT.en).sort();
+  check("en mirrors every fa key", JSON.stringify(faKeys) === JSON.stringify(enKeys));
+  check("no empty fa values", faKeys.every((k) => typeof DICT.fa[k] === "string" && DICT.fa[k].length > 0));
+  check("no empty en values", enKeys.every((k) => typeof DICT.en[k] === "string" && DICT.en[k].length > 0));
+  check("dirOf fa=rtl en=ltr", dirOf("fa") === "rtl" && dirOf("en") === "ltr");
+  const t = makeT("en");
+  check("interpolation works", t("dash.stabilitySub", { ok: 2, n: 5 }) === "2 of 5 services answered");
+  check("fallback to key", t("nonexistent.key") === "nonexistent.key");
+}
+
+/* ---------------- beta.5: bilingual verdict ---------------- */
+console.log("verdict i18n:");
+{
+  const s1 = { total: 2, resolved: 2, reachable: 1, misleading: 0 };
+  check("partial fa label", verdictOf(s1, "fa").label === "\u0642\u0627\u0628\u0644 \u0627\u0633\u062a\u0641\u0627\u062f\u0647 \u2014 \u0628\u0639\u0636\u06cc \u0633\u0631\u0648\u0631\u0647\u0627 \u0645\u062d\u062f\u0648\u062f");
+  check("partial en label", verdictOf(s1, "en").label === "Usable \u2014 some servers limited");
+  const s2 = { total: 2, resolved: 2, reachable: 0, misleading: 2 };
+  check("blocked en label", verdictOf(s2, "en").label === "Can't reach game servers");
+  check("blocked en hint", toneHint("blocked", "en").includes("unreachable"));
+  const s3 = { total: 1, resolved: 0, reachable: 0 };
+  check("dead en label", verdictOf(s3, "en").label === "DNS not answering");
+  check("ok en label", verdictOf({ total: 1, resolved: 1, reachable: 1 }, "en").label === "Game-ready");
+}
+
+/* ------------- beta.5: game data + region anchors ------------- */
+console.log("games i18n:");
+{
+  check("every game has hintEn", GAME_PRESETS.every((g) => typeof g.hintEn === "string" && g.hintEn.length > 3));
+  const pubg = GAME_PRESETS.find((g) => g.id === "pubg");
+  check("pubg fa name fixed", pubg.name === "\u067e\u0627\u0628\u062c\u06cc");
+  const lol = GAME_PRESETS.find((g) => g.id === "lol");
+  check("lol fa name fixed", lol.name === "\u0644\u06cc\u06af \u0622\u0648 \u0644\u062c\u0646\u062f\u0632");
+  const rivals = GAME_PRESETS.find((g) => g.id === "marvel-rivals");
+  check("marvel fa name fixed", rivals.name === "\u0645\u0627\u0631\u0648\u0644 \u0631\u06cc\u0648\u0644\u0632");
+  check("region anchors >= 2 with hosts", REGION_ANCHORS.length >= 2 && REGION_ANCHORS.every((a) => /^[a-z0-9.-]+$/.test(a.host)));
+  check("frankfurt anchor present", REGION_ANCHORS.some((a) => a.city === "Frankfurt"));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 fs.rmSync(outDir, { recursive: true, force: true });

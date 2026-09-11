@@ -9,6 +9,8 @@
  *  - "global"     => normally answers from anywhere
  */
 
+import * as I18N from "./i18n";
+
 export type DnsGroup = "ir-gaming" | "ir-general" | "global";
 export type Reachability = "global" | "geo" | "iran-only";
 
@@ -22,6 +24,8 @@ export interface DnsEntry {
   group: DnsGroup;
   reach: Reachability;
   note?: string;
+  /** English note (beta.5 i18n) */
+  noteEn?: string;
 }
 
 export interface DnsGroupDef {
@@ -59,6 +63,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-gaming",
     reach: "iran-only",
     note: "آی‌پی داخلی ایران — فقط از داخل شبکه‌های ایران پاسخ میده؛ از سرور تست قابل بررسی نیست",
+    noteEn: "Iran-internal IP — answers only inside Iranian networks; untestable from external test servers",
   },
   {
     id: "vanilla",
@@ -79,6 +84,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-gaming",
     reach: "global",
     note: "از اکثر نقاط دنیا هم پاسخ میده",
+    noteEn: "Answers from most of the world too",
   },
   {
     id: "zeus",
@@ -89,6 +95,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-gaming",
     reach: "geo",
     note: "معمولاً فقط به IPهای ایران جواب میده",
+    noteEn: "Usually answers only Iranian IPs",
   },
   {
     id: "memo",
@@ -99,6 +106,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-gaming",
     reach: "geo",
     note: "DNS گیمینگ ایرانی؛ ممکنه فقط به IPهای ایران جواب بده",
+    noteEn: "Iranian gaming DNS; may answer only Iranian IPs",
   },
 
   /* ---------- Iran — general / anti-sanction ---------- */
@@ -121,6 +129,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-general",
     reach: "geo",
     note: "ممکنه فقط به IPهای ایران جواب بده",
+    noteEn: "May answer only Iranian IPs",
   },
   {
     id: "403",
@@ -141,6 +150,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-general",
     reach: "geo",
     note: "DNS شرکت شاتل؛ ممکنه فقط به مشترکین خودش سرویس بده",
+    noteEn: "Shatel ISP DNS; may serve only its own subscribers",
   },
   {
     id: "pishgaman",
@@ -151,6 +161,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-general",
     reach: "geo",
     note: "DNS شرکت پیشگامان؛ ممکنه محدود به شبکه خودش باشه",
+    noteEn: "Pishgaman ISP DNS; may be limited to its own network",
   },
   {
     id: "asiatech",
@@ -161,6 +172,7 @@ export const DNS_CATALOG: DnsEntry[] = [
     group: "ir-general",
     reach: "geo",
     note: "DNS آسیاتک؛ معمولاً مختص شبکه خودشونه",
+    noteEn: "Asiatech ISP DNS; usually specific to its own network",
   },
 
   /* ---------- Global ---------- */
@@ -229,7 +241,7 @@ export const DNS_CATALOG: DnsEntry[] = [
   },
   {
     id: "yandex",
-    name: "یدکس",
+    name: "یاندکس",
     latin: "Yandex DNS",
     ips: ["77.88.8.8", "77.88.8.1"],
     cc: "ru",
@@ -251,13 +263,25 @@ export function getCatalogEntry(ip: string): DnsEntry | undefined {
   return DNS_CATALOG.find((e) => e.ips.includes(ip));
 }
 
-export function reachLabel(reach: Reachability): string {
+export function reachLabel(reach: Reachability, lang: "fa" | "en" = "fa"): string {
+  const t = (k: string) => I18N.makeT(lang)(k);
   switch (reach) {
     case "global":
-      return "قابل تست از همه‌جا";
+      return t("reach.global");
     case "geo":
-      return "معمولاً مخصوص IP ایران";
+      return t("reach.geo");
     case "iran-only":
-      return "فقط از داخل ایران";
+      return t("reach.iran");
   }
+}
+
+/** beta.5 — localized label/hint for a DNS group (labels live in i18n). */
+export function groupLabel(id: DnsGroup, lang: "fa" | "en" = "fa"): string {
+  const key = id === "ir-gaming" ? "group.irGaming" : id === "ir-general" ? "group.irGeneral" : "group.global";
+  return I18N.makeT(lang)(key);
+}
+
+export function groupHint(id: DnsGroup, lang: "fa" | "en" = "fa"): string {
+  const key = id === "ir-gaming" ? "group.irGamingHint" : id === "ir-general" ? "group.irGeneralHint" : "group.globalHint";
+  return I18N.makeT(lang)(key);
 }

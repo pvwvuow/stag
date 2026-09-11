@@ -4,10 +4,13 @@ import { useEffect, useState } from "react";
 import { Github, ShieldCheck, Wifi, Gauge, Gamepad2, Download, FileText, Copy, Check } from "lucide-react";
 import { StagMark } from "@/components/brand";
 import { useToast } from "@/hooks/use-toast";
+import { useStag, GAME_PRESETS } from "@/components/stag-store";
 import { APP_VERSION } from "@/lib/version";
 
 export function About() {
   const { toast } = useToast();
+  const st = useStag();
+  const t = st.t;
   const [version, setVersion] = useState(APP_VERSION);
   const [logsCopied, setLogsCopied] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
@@ -21,14 +24,14 @@ export function About() {
   const copyLogs = async () => {
     try {
       const r = await window.electronAPI?.getLogs?.();
-      if (!r?.ok) throw new Error(r?.error ?? "لاگ در دسترس نیست");
+      if (!r?.ok) throw new Error(r?.error ?? t("about.copyFailed"));
       await navigator.clipboard.writeText(r.logs ?? "");
       setLogsCopied(true);
       setTimeout(() => setLogsCopied(false), 2500);
-      toast({ title: "لاگ کپی شد", description: "متن لاگ در کلیپ‌بورد است — برای پشتیبانی بفرست." });
+      toast({ title: t("about.logsTitle"), description: t("about.logsDesc") });
     } catch (err) {
       toast({
-        title: "کپی نشد",
+        title: t("about.copyFailed"),
         description: String((err as Error)?.message ?? err),
         variant: "destructive",
       });
@@ -45,18 +48,13 @@ export function About() {
           Lower Ping • Better Play
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          نسخه <span className="ltr font-mono">{version}</span>
+          {t("about.version", { v: version })}
         </p>
       </section>
 
       {/* description */}
       <section className="panel p-5">
-        <p className="text-sm leading-7 text-foreground/90">
-          STAG یک تستر سلامت DNS مخصوص گیمره. به‌جای اینکه بازی را باز کنی و ببینی سرور پیدا
-          نمیشه، STAG دامنه‌های واقعی هر بازی را مستقیم از سیستم خودت روی DNSهایی که ست کردی کوئری
-          می‌گیرد، پینگ هر سرور را می‌سنجد، مسیرهای اختصاصی را شناسایی می‌کند و پورت‌های آنلاین بازی
-          را هم چک می‌کند — همه‌چیز همزمان، موازی و کاملاً آفلاین.
-        </p>
+        <p className="text-sm leading-7 text-foreground/90">{t("about.desc")}</p>
       </section>
 
       {/* features */}
@@ -65,39 +63,39 @@ export function About() {
           {[
             {
               icon: <Gauge className="h-4 w-4 text-primary" />,
-              t: "تست همزمان تا ۱۲ سرور",
-              d: "همه DNSهای فعال در یک لحظه و به‌صورت موازی سنجیده میشن.",
+              title: t("about.f1"),
+              d: t("about.f1d"),
             },
             {
               icon: <Gamepad2 className="h-4 w-4 text-primary" />,
-              t: "۱۸ بازی و پلتفرم",
-              d: "از Marvel Rivals و Valorant تا PSN و Xbox با دامنه‌های واقعی.",
+              title: t("about.f2", { n: GAME_PRESETS.length }),
+              d: t("about.f2d"),
             },
             {
               icon: <Wifi className="h-4 w-4 text-primary" />,
-              t: "کاملاً آفلاین",
-              d: "سرور تست داخل خود برنامه است؛ هیچ اطلاعاتی جایی ارسال نمیشه.",
+              title: t("about.f3"),
+              d: t("about.f3d"),
             },
             {
               icon: <ShieldCheck className="h-4 w-4 text-primary" />,
-              t: "بدون نصب درایور",
-              d: "فقط کوئری UDP معمولی روی پورت ۵۳ — نه VPN هست نه دستکاری سیستم.",
+              title: t("about.f4"),
+              d: t("about.f4d"),
             },
             {
               icon: <Download className="h-4 w-4 text-primary" />,
-              t: "بروزرسانی سبک داخل برنامه",
-              d: "آپدیت فقط بخش‌های تغییرکرده را دانلود می‌کند — از بخش تنظیمات.",
+              title: t("about.f5"),
+              d: t("about.f5d"),
             },
             {
               icon: <ShieldCheck className="h-4 w-4 text-primary" />,
-              t: "وصل و خاموش واقعی DNS",
-              d: "دکمه برق DNS ویندوز را عوض می‌کند و هر DNS دستی قبلی را هم نشان میدهد.",
+              title: t("about.f6"),
+              d: t("about.f6d"),
             },
           ].map((f) => (
-            <div key={f.t} className="bg-card/80 p-3.5">
+            <div key={f.title} className="bg-card/80 p-3.5">
               <p className="flex items-center gap-2 text-sm font-bold">
                 {f.icon}
-                {f.t}
+                {f.title}
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{f.d}</p>
             </div>
@@ -107,7 +105,7 @@ export function About() {
 
       {/* credits */}
       <section className="panel p-4">
-        <h2 className="mb-2 text-sm font-bold">ساخته‌شده با</h2>
+        <h2 className="mb-2 text-sm font-bold">{t("about.builtWith")}</h2>
         <ul className="ltr space-y-1 text-[11px] text-muted-foreground">
           <li>• Next.js + Electron + Tailwind CSS</li>
           <li>• Font: Vazirmatn (OFL) — Icons: Lucide</li>
@@ -128,10 +126,10 @@ export function About() {
             <button
               onClick={copyLogs}
               className="inline-flex items-center gap-2 rounded-full bg-muted/70 px-3.5 py-2 text-xs font-bold text-muted-foreground transition-colors hover:text-foreground"
-              title="کپی لاگ برنامه برای گزارش مشکل"
+              title={t("about.logsTip")}
             >
               {logsCopied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-              {logsCopied ? "کپی شد" : "کپی لاگ برای پشتیبانی"}
+              {logsCopied ? t("about.copied") : t("about.copyLogs")}
               {!logsCopied && <FileText className="h-3.5 w-3.5 opacity-60" />}
             </button>
           )}

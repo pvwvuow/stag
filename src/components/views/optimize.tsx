@@ -26,8 +26,8 @@ import {
   verdictOf,
   type Tone,
 } from "@/components/ui-helpers";
-import { TONE_HINT } from "@/lib/verdict";
-import { DNS_GROUPS } from "@/lib/dns-catalog";
+import { toneHint } from "@/lib/verdict";
+import { DNS_GROUPS, groupLabel as dnsGroupLabel } from "@/lib/dns-catalog";
 import { APP_VERSION } from "@/lib/version";
 import { FlagCircle } from "@/components/views/dashboard";
 
@@ -65,6 +65,7 @@ function GameCard({
           <CheckCircle2 className="h-3.5 w-3.5" />
         </span>
       )}
+
       <span
         className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-colors ${
           selected ? "bg-primary/15 text-primary" : "bg-muted/70 text-muted-foreground group-hover:text-primary/80"
@@ -85,7 +86,7 @@ function GameCard({
 
 /* ------------------------- result pieces ------------------------- */
 
-function DomainRow({ r }: { r: ApiResult["results"][number] }) {
+function DomainRow({ r, t, lang }: { r: ApiResult["results"][number]; t: (k: string) => string; lang: "fa" | "en" }) {
   return (
     <div className="space-y-1 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -93,35 +94,31 @@ function DomainRow({ r }: { r: ApiResult["results"][number] }) {
         <span className="ltr break-all font-mono text-xs text-foreground/90">{r.domain}</span>
         {!r.critical && (
           <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-500 dark:text-zinc-400">
-            وب‌سایت (غیرحیاتی)
+            {t("opt.webBadge")}
           </span>
         )}
         {r.ipv6 && (
           <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-600 dark:text-sky-400">
-            IPv6
+            {t("opt.ipv6")}
           </span>
         )}
         {r.publiclyUnresolvable ? (
           <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400">
-            خارج از قضاوت
+            {t("opt.outOfScope")}
           </span>
         ) : r.misleading ? (
           <span
             className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-600 dark:text-rose-400"
-            title={
-              r.privateAnswer
-                ? "این دامنه به یک IP داخلیِ بی‌جواب اشاره می‌کند — resolve می‌شه ولی به سرور بازی نمی‌رسه"
-                : "resolve شد ولی هیچ پورتی جواب نداد — به سرور بازی نمی‌رسه"
-            }
+            title={r.privateAnswer ? t("opt.fakeIpTip") : t("opt.noServerTip")}
           >
-            {r.privateAnswer ? "IP داخلیِ بی‌جواب" : "به سرور نمی‌رسه"}
+            {r.privateAnswer ? t("opt.fakeIp") : t("opt.noServer")}
           </span>
         ) : r.differs === true ? (
           <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
-            مسیر اختصاصی
+            {t("opt.specialRoute")}
           </span>
         ) : null}
-        <span className={`ltr ms-auto font-mono text-[11px] ${latencyClass(r.latencyMs)}`} title="زمان کوئری DNS برای این دامنه (میلی‌ثانیه)">
+        <span className={`ltr ms-auto font-mono text-[11px] ${latencyClass(r.latencyMs)}`} title={t("opt.domainMsTip")}>
           {r.latencyMs !== null ? `${r.latencyMs}ms` : ""}
         </span>
       </div>
@@ -159,25 +156,27 @@ function IpResultCard({
   isWinner,
   expanded,
   onToggle,
+  t,
+  lang,
 }: {
   ip: string;
   res?: ApiResult;
   isWinner: boolean;
   expanded: boolean;
   onToggle: () => void;
+  t: (k: string, v?: Record<string, string | number>) => string;
+  lang: "fa" | "en";
 }) {
   if (!res) {
     return (
       <div className="flex items-center gap-3 rounded-[22px] bg-muted/40 p-3.5">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         <span className="ltr font-mono text-sm">{ip}</span>
-        <span className="text-xs text-muted-foreground">
-          در حال کوئری دامنه‌ها و تست پورت‌ها (تا ~۳۰ ثانیه)
-        </span>
+        <span className="text-xs text-muted-foreground">{t("opt.pending")}</span>
       </div>
     );
   }
-  const { tone, label } = verdictOf(res);
+  const { tone, label } = verdictOf(res, lang);
   const s = res.summary;
   return (
     <div
@@ -192,11 +191,11 @@ function IpResultCard({
           {label}
         </span>
         <span className="ms-auto flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span title="سرورهای حیاتی (لاگین/بازی) که واقعاً قابل‌اتصال بودند">
-            {s.reachable ?? s.resolved}/{s.total} سرور حیاتی
+          <span title={t("opt.criticalServersTip")}>
+            {s.reachable ?? s.resolved}/{s.total} {t("opt.criticalServers")}
           </span>
           {s.avgLatency !== null && (
-            <span className="ltr flex items-center gap-1 font-mono" title="میانگین زمان کوئری DNS روی دامنه‌های این تست (میلی‌ثانیه)">
+            <span className="ltr flex items-center gap-1 font-mono" title={t("opt.avgLatencyTip")}>
               <Timer className="h-3 w-3" />
               {s.avgLatency}ms
             </span>
@@ -208,12 +207,12 @@ function IpResultCard({
         <div className="bg-background/40">
           <div className="mx-3.5 hairline" />
           <p className="px-3.5 pt-2.5 text-[11px] leading-relaxed text-muted-foreground">
-            {TONE_HINT[tone as Tone]}
+            {toneHint(tone as Tone, lang)}
           </p>
           {res.results.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">نتیجه‌ای ثبت نشد — احتمالاً DNS هیچ پاسخی نداد.</p>
+            <p className="p-3 text-xs text-muted-foreground">{t("opt.noResult")}</p>
           ) : (
-            res.results.map((r) => <DomainRow key={r.domain} r={r} />)
+            res.results.map((r) => <DomainRow key={r.domain} r={r} t={t} lang={lang} />)
           )}
         </div>
       )}
@@ -245,6 +244,7 @@ function csvEscape(v: string | number | boolean | null): string {
 
 export function Optimize() {
   const st = useStag();
+  const t = st.t;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [elapsed, setElapsed] = useState(0);
 
@@ -330,11 +330,12 @@ export function Optimize() {
   };
 
   const exportCsv = () => {
-    const gameName = getPreset(st.fullTest.gameId)?.name ?? "";
+    const g = getPreset(st.fullTest.gameId);
+    const gameName = (st.lang === "en" ? g?.latin : g?.name) ?? g?.latin ?? "";
     const head = ["service", "dns_ip", "verdict", "critical_total", "resolved", "reachable", "misleading", "avg_dns_ms", "domain", "domain_critical", "domain_status", "domain_ms", "ips", "tcp"];
     const lines = [head.join(",")];
     for (const e of exportRows()) {
-      const { label } = verdictOf(e.res!);
+      const { label } = verdictOf(e.res!, st.lang);
       const s = e.res!.summary;
       if (e.res!.results.length === 0) {
         lines.push([csvEscape(e.meta?.name ?? e.sid), e.ip, csvEscape(label), s.total, s.resolved, s.reachable ?? "", s.misleading ?? "", s.avgLatency ?? "", "", "", "", "", "", ""].join(","));
@@ -374,11 +375,11 @@ export function Optimize() {
       app: "STAG",
       version: APP_VERSION,
       exportedAt: new Date().toISOString(),
-      game: game ? { id: game.id, name: game.name, domains: game.domains, tcpPorts: game.tcpPorts } : null,
+      game: game ? { id: game.id, name: st.lang === "en" ? game.latin : game.name, domains: game.domains, tcpPorts: game.tcpPorts } : null,
       results: exportRows().map((e) => ({
         service: e.meta?.name ?? e.sid,
         dnsIp: e.ip,
-        verdict: verdictOf(e.res!).label,
+        verdict: verdictOf(e.res!, st.lang).label,
         summary: e.res!.summary,
         domains: e.res!.results,
       })),
@@ -396,28 +397,27 @@ export function Optimize() {
       <div>
         <h1 className="flex items-center gap-2 text-lg font-black">
           <Swords className="h-5 w-5 text-primary" />
-          بهینه‌سازی پینگ
+          {t("opt.title")}
         </h1>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          بازی را انتخاب کن؛ STAG دامنه‌های همان بازی را از طریق همه سرورهای فعال همزمان کوئری
-          می‌گیرد و بهترین DNS را مشخص می‌کند — بدون اینکه بازی باز شود.
+          {t("opt.subtitle")}
         </p>
       </div>
 
       {/* game grid */}
       <section>
         <h2 className="mb-2.5 text-sm font-bold text-muted-foreground">
-          بازی / پلتفرم ({GAME_PRESETS.length} مورد)
+          {t("opt.gridTitle", { n: GAME_PRESETS.length })}
         </h2>
         <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-9">
           {GAME_PRESETS.map((g) => (
             <GameCard
               key={g.id}
               id={g.id}
-              name={g.name}
-              latin={g.latin}
+              name={st.lang === "en" ? g.latin : g.name}
+              latin={st.lang === "en" ? g.name : g.latin}
               icon={g.icon}
-              hint={g.hint}
+              hint={st.lang === "en" ? g.hintEn : g.hint}
               selected={st.gameId === g.id}
               onSelect={() => st.setGameId(g.id)}
             />
@@ -431,27 +431,29 @@ export function Optimize() {
           {game ? (
             <>
               <p className="text-sm font-bold">
-                انتخاب فعلی: <span className="text-primary">{game.name}</span>
+                {t("opt.current")} <span className="text-primary">{st.lang === "en" ? game.latin : game.name}</span>
                 <span className="ltr ms-2 text-[10px] font-medium text-muted-foreground">
-                  {game.latin}
+                  {st.lang === "en" ? game.name : game.latin}
                 </span>
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {game.domains.length} دامنه + پورت‌های{" "}
-                <span className="ltr font-mono">{game.tcpPorts.join(", ")}</span> — روی{" "}
-                {st.services.reduce((a, m) => a + m.ips.length, 0)} آی‌پی از {st.services.length}{" "}
-                سرویس همزمان تست می‌شود
+                {t("opt.runInfo", {
+                  n: game.domains.length,
+                  ports: game.tcpPorts.join(", "),
+                  ips: st.services.reduce((a, m) => a + m.ips.length, 0),
+                  svcs: st.services.length,
+                })}
               </p>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">اول یک بازی از بالا انتخاب کن</p>
+            <p className="text-sm text-muted-foreground">{t("opt.pickFirst")}</p>
           )}
         </div>
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-2">
             <Switch id="tcp-opt" checked={st.tcpEnabled} onCheckedChange={st.setTcpEnabled} />
             <Label htmlFor="tcp-opt" className="cursor-pointer text-xs">
-              تست پورت‌های TCP
+              {t("opt.tcpSwitch")}
             </Label>
           </span>
           <button
@@ -462,12 +464,12 @@ export function Optimize() {
             {st.fullTest.inProgress ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                در حال تست... {elapsed}s
+                {t("opt.running", { s: elapsed })}
               </>
             ) : (
               <>
                 <Play className="h-4 w-4" />
-                تست همزمان {st.services.length} سرویس
+                {t("opt.run", { n: st.services.length })}
               </>
             )}
           </button>
@@ -478,26 +480,24 @@ export function Optimize() {
       {st.fullTest.order.length > 0 && (
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-muted-foreground">
-              نتایج (مرتب‌شده از بهترین — هر سرویس با آی‌پی‌های خودش)
-            </h2>
+            <h2 className="text-sm font-bold text-muted-foreground">{t("opt.resultsTitle")}</h2>
             {hasResults && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={exportCsv}
                   className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3.5 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
-                  title="خروجی نتایج برای اکسل"
+                  title="Excel CSV"
                 >
                   <FileDown className="h-3.5 w-3.5" />
-                  خروجی CSV
+                  {t("opt.exportCsv")}
                 </button>
                 <button
                   onClick={exportJson}
                   className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3.5 py-2 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
-                  title="خروجی کامل نتایج به‌صورت JSON"
+                  title="JSON"
                 >
                   <FileJson className="h-3.5 w-3.5" />
-                  خروجی JSON
+                  {t("opt.exportJson")}
                 </button>
               </div>
             )}
@@ -512,22 +512,22 @@ export function Optimize() {
                   <div className="flex flex-wrap items-center gap-2 px-1">
                     <FlagCircle cc={meta?.cc ?? "ir"} size="h-6 w-6" />
                     <p className="text-sm font-bold" dir="rtl">
-                      {meta?.name ?? "سرویس"}
+                      {meta ? (st.lang === "en" && !meta.custom ? meta.latin : meta.name) : t("opt.svc")}
                       {meta && !meta.custom && (
                         <span className="ltr ms-1.5 text-[10px] font-medium text-muted-foreground">
-                          {meta.latin}
+                          {st.lang === "en" ? meta.name : meta.latin}
                         </span>
                       )}
                     </p>
                     {meta && !meta.custom && (
                       <span className="text-[10px] text-muted-foreground">
-                        {DNS_GROUPS.find((g) => g.id === meta.group)?.label}
+                        {dnsGroupLabel(meta.group ?? "global", st.lang)}
                       </span>
                     )}
                     {groupHasWinner && (
                       <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-black text-primary">
                         <Trophy className="h-3 w-3" />
-                        بهترین سرویس
+                        {t("opt.bestService")}
                       </span>
                     )}
                   </div>
@@ -541,6 +541,8 @@ export function Optimize() {
                         isWinner={winnerIp === ip && !st.fullTest.inProgress}
                         expanded={!!expanded[ip]}
                         onToggle={() => setExpanded((e) => ({ ...e, [ip]: !e[ip] }))}
+                        t={t}
+                        lang={st.lang}
                       />
                     ))}
                   </div>
@@ -555,50 +557,42 @@ export function Optimize() {
         <div className="grid gap-px bg-border/40 sm:grid-cols-2">
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="h-3.5 w-3.5" /> مناسب بازی
+              <CheckCircle2 className="h-3.5 w-3.5" /> {t("opt.legendOk")}
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              همه سرورهای حیاتی بازی (لاگین و سرویس) نه‌فقط resolve شدند بلکه واقعاً قابل‌اتصال بودند؛
-              ست‌کردنش روی کنسول/PC امنه.
+              {t("opt.legendOkBody")}
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
-              <CheckCircle2 className="h-3.5 w-3.5" /> قابل استفاده — بعضی سرورها محدود
+              <CheckCircle2 className="h-3.5 w-3.5" /> {t("opt.legendPartial")}
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              در ایران عادیه: چند دامنه‌ی ناشر (مثل id.163.com) فیلتره ولی مسیر اصلی بازی بازه.
-              بازی معمولاً کار می‌کنه — مثلاً پینگ ۹۹۹ در لابی ولی ۱۳۰ داخل مچ. علامت قرمز نیست.
+              {t("opt.legendPartialBody")}
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
-              <Route className="h-3.5 w-3.5" /> به سرورهای بازی نمی‌رسه
+              <Route className="h-3.5 w-3.5" /> {t("opt.legendBlocked")}
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              DNS جواب می‌ده ولی هیچ سرور حیاتی‌ای از این شبکه در دسترس نبود (تحریم/فیلترینگ).
-              بازی ممکنه از مسیر دیگه‌ای هنوز کار کنه — ملاک نهایی تجربه‌ی خودت داخل بازیه.
+              {t("opt.legendBlockedBody")}
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
-              <XCircle className="h-3.5 w-3.5" /> مسیر فیک (IP داخلی) / DNS جواب نمیده
+              <XCircle className="h-3.5 w-3.5" /> {t("opt.legendBad")}
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              «مسیر فیک» یعنی دامنه به IP داخلی/بی‌جواب resolve می‌شه — توهم اتصال؛ استفاده نکن.
-              «جواب نمیده» یعنی هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
+              {t("opt.legendBadBody")}
             </p>
           </div>
           <div className="bg-card/80 p-3.5 sm:col-span-2">
             <p className="flex items-center gap-1.5 text-xs font-bold">
-              <Info className="h-3.5 w-3.5 text-muted-foreground" /> نکته
+              <Info className="h-3.5 w-3.5 text-muted-foreground" /> {t("opt.legendNote")}
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              قضاوت و رتبه‌بندی فقط بر پایه‌ی دامنه‌های حیاتی (لاگین/سرویس بازی) و قابل‌اتصال‌بودن واقعی
-              (نه فقط resolve) محاسبه می‌شه؛ وب‌سایت تبلیغاتی بازی در رتبه اثری نداره. عدد پینگ هم «تأخیر
-              رسیدن به سرور بازی روی TCP/443» است، نه پینگ داخل گیم (UDP). عددی که خود بازی در لابی/مچ
-              نشون می‌ده سنجش داخلی خودشه و ممکنه با تست STAG فرق کنه. فقط مطمئن شو فایروال پورت ۵۳
-              (UDP) را نبسته باشد.
+              {t("opt.legendNoteBody")}
             </p>
           </div>
         </div>

@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /** Retry the embedded engine from the in-app error page (۵.۱) */
   retryServer: () => ipcRenderer.invoke("app:retry-server"),
 
+  /** beta.5 — UI language switch (rebuilds the tray menu labels) */
+  setLang: (lang) => ipcRenderer.invoke("app:set-lang", lang),
+
   /** beta.4 — Windows elevation state + one-click UAC relaunch */
   getElevation: () => ipcRenderer.invoke("app:elevation"),
   relaunchElevated: () => ipcRenderer.invoke("app:relaunch-elevated"),

@@ -8,9 +8,9 @@ export interface LiveSample {
   t: number;
   ok: boolean;
   ms: number | null;
-  /** which metric `ms` is — real game TCP RTT, DNS-server TCP:53 RTT, or
-   *  DNS query time */
-  msKind?: "tcp" | "server" | "dns" | null;
+  /** which metric `ms` is — real game TCP RTT, regional game-path RTT
+   *  (beta.5), DNS-server TCP:53 RTT, or DNS query time */
+  msKind?: "tcp" | "region" | "server" | "dns" | null;
   /** game-server TCP reachability for this probe (null = TCP not attempted) */
   tcpOk?: boolean | null;
 }
@@ -20,7 +20,19 @@ export interface LiveSample {
  * bucket; a lost packet is drawn as a full-height red sliver so gaps in
  * connectivity are impossible to miss.
  */
-export function LiveChart({ samples, slots = 45 }: { samples: LiveSample[]; slots?: number }) {
+export function LiveChart({
+  samples,
+  slots = 45,
+  aria = "نمودار زنده پکت‌ها",
+  empty = "پایش زنده روشن نیست",
+  samplesLabel = (n: number) => `${n} نمونه اخیر`,
+}: {
+  samples: LiveSample[];
+  slots?: number;
+  aria?: string;
+  empty?: string;
+  samplesLabel?: (n: number) => string;
+}) {
   const W = 560;
   const H = 140;
   const PAD_T = 8;
@@ -56,7 +68,7 @@ export function LiveChart({ samples, slots = 45 }: { samples: LiveSample[]; slot
 
   return (
     <div className="w-full" dir="ltr">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-[130px] w-full" role="img" aria-label="نمودار زنده پکت‌ها">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-[130px] w-full" role="img" aria-label={aria}>
         {/* avg line */}
         {avgMs !== null && (
           <g>
@@ -95,11 +107,11 @@ export function LiveChart({ samples, slots = 45 }: { samples: LiveSample[]; slot
           ))
         ) : (
           <text x={W / 2} y={H / 2} textAnchor="middle" className="fill-muted-foreground" fontSize="12">
-            پایش زنده روشن نیست
+            {empty}
           </text>
         )}
         <text x={2} y={H - 4} className="fill-muted-foreground" fontSize="9">
-          {samples.length > 0 ? `${samples.length} نمونه اخیر` : ""}
+          {samples.length > 0 ? samplesLabel(samples.length) : ""}
         </text>
       </svg>
     </div>

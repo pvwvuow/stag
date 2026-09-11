@@ -3,6 +3,59 @@ import { Resolver } from "node:dns/promises";
 import net from "node:net";
 import { PING_TUNING, clamp } from "@/lib/config";
 import { localGuard } from "@/lib/guard";
+import { REGION_ANCHORS } from "@/lib/games";
+
+/* ------------------------------------------------------------------ */
+/* beta.5 — game-region path anchors ("in-game ping" approximation).   */
+/* Iranian players almost always land on EU game clusters (e.g.        */
+/* Frankfurt). A TCP/443 handshake to a GEO-PINNED cloud endpoint in   */
+/* the same region rides the same network path as the game, so the     */
+/* fastest anchor RTT is the closest honest number to the in-game      */
+/* ping when the game servers themselves are sanctions-blocked.        */
+/* Anchor DNS answers are cached (10 min) so the 2s live cadence never */
+/* pays a lookup cost — only the TCP handshake is timed.               */
+/* ------------------------------------------------------------------ */
+const ANCHOR_TTL_MS = 10 * 60 * 1000;
+const anchorCache = new Map<string, { ips: string[]; at: number }>();
+const anchorResolver = new Resolver({ timeout: 3000, tries: 1 });
+
+async function anchorIps(host: string): Promise<string[]> {
+  const hit = anchorCache.get(host);
+  if (hit && Date.now() - hit.at < ANCHOR_TTL_MS) return hit.ips;
+  let ips: string[] = [];
+  try {
+    ips = (await anchorResolver.resolve4(host)).slice(0, 2);
+  } catch {
+    try {
+      ips = (await anchorResolver.resolve6(host)).slice(0, 1);
+    } catch {
+      ips = [];
+    }
+  }
+  anchorCache.set(host, { ips, at: Date.now() });
+  return ips;
+}
+
+async function regionProbe(
+  tcpTimeout: number,
+): Promise<{ ms: number | null; host: string | null; city: string | null }> {
+  const jobs = REGION_ANCHORS.map(async (a) => {
+    const ips = await anchorIps(a.host);
+    if (ips.length === 0) return { ms: null, host: null, city: null };
+    const results = await Promise.all(ips.map((ip) => tcpTest(ip, 443, tcpTimeout)));
+    let best: number | null = null;
+    for (const r of results) {
+      if (r.ok && r.latencyMs !== null && (best === null || r.latencyMs < best)) best = r.latencyMs;
+    }
+    return best === null ? { ms: null, host: null, city: null } : { ms: best, host: a.host, city: a.city };
+  });
+  const all = await Promise.all(jobs);
+  let best: { ms: number | null; host: string | null; city: string | null } = { ms: null, host: null, city: null };
+  for (const r of all) {
+    if (r.ms !== null && (best.ms === null || r.ms < best.ms)) best = r;
+  }
+  return best;
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -29,7 +82,14 @@ const MAX_PROBE_PORTS = PING_TUNING.maxProbePorts;
  *     to the resolver is a REAL network RTT to the thing STAG optimises, works
  *     for Iranian resolvers without any VPN, and fills the gap honestly
  *     (labelled "پینگ سرور DNS", never passed off as game RTT).
- *  4. Fallback chain: game TCP RTT -> DNS-server TCP:53 RTT -> DNS query time.
+ *  4. NEW (beta.5, `region: true`) — TCP/443 probe to GEO-PINNED EU cloud
+ *     anchors (Frankfurt / Paris / Stockholm) that ride the same network path
+ *     as the game's regional clusters. When the game servers are blocked but
+ *     the user can still play (their own example: Frankfurt 130ms in-match),
+ *     this is the closest honest approximation of the in-game ping — labelled
+ *     "region" and NEVER mixed into sweep ranking (DNS-independent).
+ *  5. Fallback chain: game TCP RTT -> region anchor RTT (region mode only)
+ *     -> DNS-server TCP:53 RTT -> DNS query time.
  * `server: "system"` uses the OS resolver (after STAG applies a DNS, live
  * monitoring shows the real experience through it); the server probe then
  * targets the first current system server.
@@ -99,7 +159,7 @@ export async function POST(req: NextRequest) {
   const denied = localGuard(req);
   if (denied) return denied;
 
-  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number; systemServers?: string[] };
+  let body: { server?: string; domain?: string; tcp?: boolean; ports?: number[]; queryTimeoutMs?: number; tcpTimeoutMs?: number; systemServers?: string[]; region?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -196,6 +256,10 @@ export async function POST(req: NextRequest) {
     const serverProbe: Promise<{ ok: boolean; latencyMs: number | null }> = probeTarget
       ? tcpTest(probeTarget, 53, Math.min(tcpTimeout, 3000))
       : Promise.resolve({ ok: false, latencyMs: null });
+    // beta.5 — regional anchors kick off at the SAME tick (parallel), so the
+    // live 2s cadence never doubles. Cached anchor DNS makes repeats cheap.
+    const regionP: Promise<{ ms: number | null; host: string | null; city: string | null }> =
+      body.region === true ? regionProbe(Math.min(tcpTimeout, 2500)) : Promise.resolve({ ms: null, host: null, city: null });
 
     let tcpMs: number | null = null;
     let tcpOk: boolean | null = null;
@@ -232,16 +296,18 @@ export async function POST(req: NextRequest) {
     const serverTcpOk = probeTarget ? sp.ok : null;
     const serverTcpMs = probeTarget ? sp.latencyMs : null;
     const serverIp = probeTarget;
+    const rg = await regionP;
 
     // `ms` is the number STAG surfaces as the headline latency, with a strict
-    // honesty chain: real game-server TCP RTT ("tcp") -> DNS-server TCP:53
-    // RTT ("server") -> DNS query time ("dns"). `msKind` tells the client
-    // exactly which one it is so the UI never passes a DNS lookup off as a
-    // game ping ("داده غلط") — and so a sanctioned-game TCP block from Iran
-    // still leaves the user a real, labelled number instead of a blank.
-    const ms = tcpMs ?? serverTcpMs ?? dnsMs;
-    const msKind: "tcp" | "server" | "dns" =
-      tcpMs !== null ? "tcp" : serverTcpMs !== null ? "server" : "dns";
+    // honesty chain: real game-server TCP RTT ("tcp") -> regional game-path
+    // RTT ("region", region mode only) -> DNS-server TCP:53 RTT ("server") ->
+    // DNS query time ("dns"). `msKind` tells the client exactly which one it
+    // is so the UI never passes a DNS lookup off as a game ping ("داده غلط")
+    // — and so a sanctioned-game TCP block from Iran still leaves the user a
+    // real, labelled number instead of a blank.
+    const ms = tcpMs ?? rg.ms ?? serverTcpMs ?? dnsMs;
+    const msKind: "tcp" | "region" | "server" | "dns" =
+      tcpMs !== null ? "tcp" : rg.ms !== null ? "region" : serverTcpMs !== null ? "server" : "dns";
     return NextResponse.json({
       ok: true,
       ms,
@@ -252,6 +318,9 @@ export async function POST(req: NextRequest) {
       serverTcpMs,
       serverTcpOk,
       serverIp,
+      regionMs: rg.ms,
+      regionHost: rg.host,
+      regionCity: rg.city,
       viaPort,
       viaIp,
       privateIp,
@@ -271,6 +340,9 @@ export async function POST(req: NextRequest) {
       serverTcpMs: null,
       serverTcpOk: null,
       serverIp: null,
+      regionMs: null,
+      regionHost: null,
+      regionCity: null,
       viaPort: null,
       viaIp: null,
       privateIp: false,

@@ -17,7 +17,12 @@
  *  misleading 0 reachable AND answers are private/fake IPs   → rose   «مسیر فیک (IP داخلی)»
  *  dead       the DNS itself never answered                  → rose   «DNS جواب نمیده»
  *  unknown    nothing could be judged                        → zinc
+ *
+ * beta.5 — labels/hints are localized via i18n (`verdict.*` / `hint.*` keys);
+ * the Persian defaults stay for backwards compatibility.
  */
+
+import * as I18N from "./i18n";
 
 export type Tone = "ok" | "partial" | "blocked" | "dead" | "misleading" | "unknown";
 
@@ -54,12 +59,17 @@ export const TONE_HINT: Record<Tone, string> = {
   unknown: "قضاوت ممکن نشد — تست را دوباره اجرا کن.",
 };
 
+/** beta.5 — localized hint per tone (English mirrors in i18n.ts). */
+export function toneHint(tone: Tone, lang: "fa" | "en" = "fa"): string {
+  return I18N.makeT(lang)(`hint.${tone}`);
+}
+
 /**
  * Multi-dimensional verdict judging only the CRITICAL (auth + core game)
  * domains, keyed off REACHABILITY (TCP handshake / non-private IP), not mere
  * DNS resolution. Falls back gracefully for older API responses.
  */
-export function verdictOf(s: VerdictSummary): { tone: Tone; label: string } {
+export function verdictOf(s: VerdictSummary, lang: "fa" | "en" = "fa"): { tone: Tone; label: string } {
   // Reachability is authoritative when present; otherwise fall back to resolved.
   const reachable = typeof s.reachable === "number" ? s.reachable : s.resolved;
   const misleading = typeof s.misleading === "number" ? s.misleading : 0;
@@ -85,19 +95,7 @@ export function verdictOf(s: VerdictSummary): { tone: Tone; label: string } {
     tone = "dead";
   }
 
-  const label =
-    tone === "ok"
-      ? "مناسب بازی"
-      : tone === "partial"
-        ? "قابل استفاده — بعضی سرورها محدود"
-        : tone === "blocked"
-          ? "به سرورهای بازی نمی‌رسه"
-          : tone === "misleading"
-            ? "مسیر فیک (IP داخلی)"
-            : tone === "dead"
-              ? "DNS جواب نمیده"
-              : "قضاوت ممکن نبود";
-  return { tone, label };
+  return { tone, label: I18N.makeT(lang)(`verdict.${tone}`) };
 }
 
 /** Iran-internal / private-range IPs can never be tested from an external server. */

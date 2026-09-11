@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useStag, type ServiceMeta, type SweepResult } from "@/components/stag-store";
 import { getPreset, primaryProbeHost } from "@/lib/games";
+import { groupLabel as dnsGroupLabel } from "@/lib/dns-catalog";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
 import { apiFetch } from "@/lib/api-client";
 import { LiveChart, type LiveSample } from "@/components/ping-chart";
@@ -88,17 +89,44 @@ function StatItem({
   );
 }
 
-function groupLabel(meta: ServiceMeta): string {
-  if (meta.custom) return "سرور دلخواه";
-  return DNS_GROUPS.find((g) => g.id === meta.group)?.label ?? "";
+function groupLabel(
+  meta: ServiceMeta,
+  lang: "fa" | "en",
+  t: (k: string) => string,
+): string {
+  if (meta.custom) return t("dash.custom");
+  return dnsGroupLabel(meta.group ?? "global", lang);
 }
 
+/** best latency for a service (min across its IPs) */
 function bestMsOf(meta: ServiceMeta, sweep: Record<string, SweepResult>): number | null {
   const vals = meta.ips
     .map((ip) => sweep[ip])
     .filter((r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number")
     .map((r) => r.ms);
   return vals.length ? Math.min(...vals) : null;
+}
+
+/**
+ * beta.5 — WHAT the best number of this service actually is. The dashboard
+ * used to show any result as a green "ping", so when game servers were
+ * sanctions-blocked every DNS looked great on its DNS-server RTT alone —
+ * exactly the fake-good feeling the optimizer does not have. Now the kind
+ * drives the label, the color AND the ranking.
+ */
+function bestOfMeta(
+  meta: ServiceMeta,
+  sweep: Record<string, SweepResult>,
+): { ms: number; kind: "tcp" | "server" | "dns" } | null {
+  const ok = meta.ips
+    .map((ip) => sweep[ip])
+    .filter((r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number");
+  if (ok.length === 0) return null;
+  const tcp = ok.filter((r) => r.msKind === "tcp").map((r) => r.ms);
+  if (tcp.length > 0) return { ms: Math.min(...tcp), kind: "tcp" };
+  const server = ok.filter((r) => r.msKind === "server").map((r) => r.ms);
+  if (server.length > 0) return { ms: Math.min(...server), kind: "server" };
+  return { ms: Math.min(...ok.map((r) => r.ms)), kind: "dns" };
 }
 
 function hasResultOf(meta: ServiceMeta, sweep: Record<string, SweepResult>): boolean {
@@ -108,6 +136,8 @@ function hasResultOf(meta: ServiceMeta, sweep: Record<string, SweepResult>): boo
 /* ------------------------- service result row ------------------------- */
 
 function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
+  const st = useStag();
+  const t = st.t;
   const pending = !r;
   return (
     <span
@@ -139,32 +169,32 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
           {r.msKind === "dns" && (
             <span
               className="text-[8px] font-medium text-amber-600 dark:text-amber-400"
-              title="پورت بازی جواب نداد — این عدد زمان کوئری DNS است، نه پینگ سرور بازی"
+              title={t("dash.dnsTimeTip")}
             >
-              زمان DNS
+              {t("dash.dnsTime")}
             </span>
           )}
           {r.msKind === "server" && (
             <span
               className="text-[8px] font-medium text-cyan-600 dark:text-cyan-400"
-              title="سرور بازی از این مسیر در دسترس نیست — این عدد پینگ واقعی شبکه تا سرور DNS است (دست‌دادن TCP:53)"
+              title={t("dash.dnsServerPingTip")}
             >
-              پینگ سرور DNS
+              {t("dash.dnsServerPing")}
             </span>
           )}
           {r.tcpOk === false && (
             <span className="text-[8px] font-medium text-amber-600 dark:text-amber-400">
-              ۴۴۳ بسته
+              {t("dash.portBlocked")}
             </span>
           )}
           {r.privateIp && (
-            <span className="text-[8px] font-medium text-muted-foreground/80" title="DNS یک IP داخلی داد">
-              IP داخلی
+            <span className="text-[8px] font-medium text-muted-foreground/80" title={t("dash.privateIpTip")}>
+              {t("dash.privateIp")}
             </span>
           )}
         </>
       ) : (
-        <span className="text-[10px] font-bold text-rose-500">بی‌پاسخ</span>
+        <span className="text-[10px] font-bold text-rose-500">{t("dash.noReply")}</span>
       )}
     </span>
   );
@@ -173,7 +203,10 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
 function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
   const st = useStag();
   const { toast } = useToast();
-  const bestMs = bestMsOf(meta, st.sweepResults);
+  const t = st.t;
+  const best = bestOfMeta(meta, st.sweepResults);
+  const bestMs = best?.ms ?? null;
+  const bestKind = best?.kind ?? null;
   const tested = hasResultOf(meta, st.sweepResults);
   const winner = st.bestService?.id === meta.id && !st.sweeping && bestMs !== null;
   const selected = st.selectedService === meta.id;
@@ -181,8 +214,8 @@ function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
   const copy = () => {
     const text = meta.ips.join(", ");
     navigator.clipboard?.writeText(text).then(
-      () => toast({ title: "کپی شد", description: text }),
-      () => toast({ title: "کپی نشد", variant: "destructive" }),
+      () => toast({ title: t("dash.copied"), description: text }),
+      () => toast({ title: t("dash.copyFailed"), variant: "destructive" }),
     );
   };
 
@@ -202,7 +235,7 @@ function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
             </span>
           )}
         </p>
-        <p className="truncate text-[10px] text-muted-foreground">{groupLabel(meta)}</p>
+        <p className="truncate text-[10px] text-muted-foreground">{groupLabel(meta, st.lang, t)}</p>
       </div>
 
       {/* paired DNS addresses — side by side */}
@@ -215,23 +248,40 @@ function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
       <div className="ms-auto flex items-center gap-2">
         {winner && (
           <span className="rounded-full bg-primary px-2.5 py-1 text-[10px] font-black text-primary-foreground">
-            بهترین
+            {t("dash.bestBadge")}
           </span>
         )}
-        <span className="ltr w-16 text-end font-mono text-base font-black text-primary">
+        {bestKind !== null && bestMs !== null && bestKind !== "tcp" && (
+          <span
+            className="rounded-full bg-amber-500/10 px-2.5 py-1 text-[9px] font-bold text-amber-600 dark:text-amber-400"
+            title={t("dash.noGameRouteTip")}
+          >
+            {t("dash.noGameRoute")} · {t("dash.dnsPing")}
+          </span>
+        )}
+        {bestKind === "tcp" && (
+          <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
+            {t("dash.gamePing")}
+          </span>
+        )}
+        <span
+          className={`ltr w-16 text-end font-mono text-base font-black ${
+            bestKind === "tcp" || bestKind === null ? "text-primary" : "text-muted-foreground"
+          }`}
+        >
           {bestMs !== null ? `${bestMs} ms` : pendingOrDash(tested, st.sweeping && !tested)}
         </span>
         <button
           onClick={() => st.connectDns(meta.id)}
           disabled={st.dnsAction !== null}
-          title="این DNS را روی ویندوز فعال کن"
+          title={t("dash.applyThisDns")}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"
         >
           <Plug className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={() => st.selectService(meta.id)}
-          title={selected ? "انتخاب‌شده برای دکمه برق" : "انتخاب به‌عنوان DNS پیش‌فرض دکمه برق"}
+          title={selected ? t("dash.pickedForPower") : t("dash.pickForPower")}
           className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
             selected
               ? "bg-primary text-primary-foreground"
@@ -242,7 +292,7 @@ function ServiceResultRow({ meta }: { meta: ServiceMeta }) {
         </button>
         <button
           onClick={copy}
-          title="کپی آی‌پی‌ها"
+          title={t("dash.copyIps")}
           className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
         >
           <Copy className="h-3.5 w-3.5" />
@@ -263,18 +313,19 @@ function pendingOrDash(tested: boolean, pending: boolean): string {
 function SystemDnsCard() {
   const st = useStag();
   const s = st.dnsSys;
+  const t = st.t;
   return (
     <section className="panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-sm font-bold">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          وضعیت DNS سیستم
+          {t("dash.sysDnsTitle")}
         </h2>
         <button
           onClick={() => st.refreshDns()}
           className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-          title="بررسی دوباره"
-          aria-label="بررسی دوباره"
+          title={t("dash.recheck")}
+          aria-label={t("dash.recheck")}
         >
           <RotateCw className="h-3.5 w-3.5" />
         </button>
@@ -283,11 +334,11 @@ function SystemDnsCard() {
       {!s.loaded ? (
         <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          در حال خواندن وضعیت سیستم...
+          {t("dash.readingSys")}
         </div>
       ) : !s.supported ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          تشخیص و تغییر DNS سیستم در این محیط ({s.platform ?? "نامشخص"}) فعال نیست؛ در محیط فعلی فقط تست‌ها کار می‌کنند.
+          {t("dash.unsupportedHere", { p: s.platform ?? t("dash.custom") })}
         </p>
       ) : (
         <>
@@ -298,13 +349,13 @@ function SystemDnsCard() {
               }`}
             />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-black">{s.on ? "DNS روشنه" : "DNS خاموشه"}</p>
+              <p className="text-sm font-black">{s.on ? t("dash.dnsOn") : t("dash.dnsOff")}</p>
               <p className="truncate text-[10px] text-muted-foreground">
                 {s.on
                   ? st.sysMatch
                     ? `${st.sysMatch.name} (${st.sysMatch.latin})`
-                    : "DNS دستی — از خارج STAG ست شده"
-                  : "سیستم روی حالت خودکار (DHCP) است"}
+                    : t("dash.manualDns")
+                  : t("dash.dhcpAuto")}
               </p>
             </div>
           </div>
@@ -315,14 +366,14 @@ function SystemDnsCard() {
           )}
           {s.primary && (
             <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-              اینترفیس: <span className="ltr font-mono">{s.primary.alias}</span>
+              {t("dash.iface")} <span className="ltr font-mono">{s.primary.alias}</span>
             </p>
           )}
 
           {s.on && !st.sysMatch && (
             <p className="mt-2.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
               <Info className="mt-0.5 h-3 w-3 shrink-0" />
-              این DNS را خودت دستی روی سیستم گذاشتی؛ دکمه برق برش می‌گرداند به حالت خودکار.
+              {t("dash.manualNote")}
             </p>
           )}
 
@@ -332,13 +383,13 @@ function SystemDnsCard() {
               disabled={st.dnsAction !== null}
               className="flex-1 rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
             >
-              پاک کردن کش DNS
+              {t("dash.flush")}
             </button>
             <button
               onClick={st.checkConnection}
               className="flex-1 rounded-full bg-muted/70 px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
             >
-              بررسی اتصال اینترنت
+              {t("dash.checkNet")}
             </button>
           </div>
         </>
@@ -362,7 +413,7 @@ export function Dashboard() {
      per render is harmless (and the compiler auto-memoizes). */
   const liveTarget = (() => {
     if (st.dnsSys.on) {
-      return { server: "system", label: st.sysMatch ? `DNS سیستم (${st.sysMatch.name})` : "DNS سیستم" };
+      return { server: "system", label: st.sysMatch ? st.t("dash.viaSystemName", { name: st.sysMatch.name }) : st.t("dash.viaSystem") };
     }
     const svc =
       (st.selectedService ? st.metaFor(st.selectedService) : null) ??
@@ -429,7 +480,7 @@ export function Dashboard() {
       if (!target) return;
       let ok = false;
       let ms: number | null = null;
-      let msKind: "tcp" | "dns" | null = null;
+      let msKind: "tcp" | "region" | "server" | "dns" | null = null;
       let tcpOk: boolean | null = null;
       try {
         const r = await apiFetch("/api/ping", {
@@ -439,6 +490,9 @@ export function Dashboard() {
             domain: domainRef.current,
             tcp: tcpRef.current,
             ports: portsRef.current,
+            // beta.5 — always measure the regional game path too, so the
+            // headline can fall back to the closest in-game-like number
+            region: true,
             // only relevant when probing the system resolver (3.1)
             systemServers: target.server === "system" ? sysServersRef.current : undefined,
           }),
@@ -466,28 +520,36 @@ export function Dashboard() {
   }, [live]);
 
   const liveStats = useMemo(() => {
-    /* beta.3 — a probe "delivered" whenever it produced a real number: game
-       TCP RTT (best), DNS-server TCP:53 RTT (works from Iran without VPN),
-       or DNS query time. A true failure = the DNS did not answer at all.
-       The stats use the most REAL kind available so the headline number is
-       honest and the monitor never goes blank just because sanctioned game
-       servers are unreachable without a VPN. */
+    /* beta.5 — honesty chain for the headline: real game TCP RTT first; then
+       the REGIONAL game-path RTT (geo-pinned EU anchors — the closest number
+       to what the user actually sees in-game, e.g. Frankfurt ~130ms); then
+       the DNS-server RTT; then DNS query time. The DNS number is now the
+       LAST resort, per the user's explicit feedback ("not my DNS's ping"). */
     const delivered = samples.filter((s) => s.ok && s.ms !== null);
     const tcpVals = delivered.filter((s) => s.msKind === "tcp").map((s) => s.ms as number);
+    const regionVals = delivered.filter((s) => s.msKind === "region").map((s) => s.ms as number);
     const serverVals = delivered.filter((s) => s.msKind === "server").map((s) => s.ms as number);
     const anyVals = delivered.map((s) => s.ms as number);
-    const vals = tcpVals.length ? tcpVals : serverVals.length ? serverVals : anyVals;
+    const vals = tcpVals.length
+      ? tcpVals
+      : regionVals.length
+        ? regionVals
+        : serverVals.length
+          ? serverVals
+          : anyVals;
     /* which kind the headline stats represent right now */
-    const kind: "tcp" | "server" | "dns" | "mixed" =
+    const kind: "tcp" | "region" | "server" | "dns" | "mixed" =
       delivered.length === 0
-        ? "dns"
+        ? "region"
         : tcpVals.length === delivered.length
           ? "tcp"
-          : serverVals.length === delivered.length
-            ? "server"
-            : serverVals.length === 0 && tcpVals.length === 0
-              ? "dns"
-              : "mixed";
+          : regionVals.length === delivered.length
+            ? "region"
+            : serverVals.length === delivered.length
+              ? "server"
+              : serverVals.length === 0 && regionVals.length === 0 && tcpVals.length === 0
+                ? "dns"
+                : "mixed";
     const cur = vals.length ? vals[vals.length - 1] : null;
     const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
     const min = vals.length ? Math.min(...vals) : null;
@@ -508,6 +570,7 @@ export function Dashboard() {
 
   const busy = st.dnsAction !== null;
   const dnsOn = st.dnsSys.on;
+  const t = st.t;
 
   const togglePower = () => {
     if (dnsOn) st.disconnectDns();
@@ -521,45 +584,59 @@ export function Dashboard() {
     return id ? st.metaFor(id) : null;
   })();
 
-  /* stats trio from sweep */
+  /* stats trio from sweep — beta.5: only REAL game-server TCP RTTs count for
+     "best/avg/improvement". DNS-RTT numbers must not masquerade as game ping
+     here either; when nothing reached the game, the card says so honestly. */
   const okServices = st.services.filter((m) => bestMsOf(m, st.sweepResults) !== null);
-  const allTestedMs = Object.values(st.sweepResults)
-    .filter((r): r is SweepResult & { ok: true; ms: number } => r.ok && typeof r.ms === "number")
+  const reachedServices = st.services.filter((m) => bestOfMeta(m, st.sweepResults)?.kind === "tcp");
+  const tcpAllMs = Object.values(st.sweepResults)
+    .filter(
+      (r): r is SweepResult & { ok: true; ms: number } =>
+        r.ok && typeof r.ms === "number" && r.msKind === "tcp",
+    )
     .map((r) => r.ms);
-  const avgAll = allTestedMs.length
-    ? Math.round(allTestedMs.reduce((a, b) => a + b, 0) / allTestedMs.length)
+  const anyResultAtAll = Object.keys(st.sweepResults).length > 0;
+  const avgAll = tcpAllMs.length
+    ? Math.round(tcpAllMs.reduce((a, b) => a + b, 0) / tcpAllMs.length)
     : null;
-  const best = st.bestService?.ms ?? null;
+  const best = tcpAllMs.length ? Math.min(...tcpAllMs) : null;
   const improvement =
     best !== null && avgAll !== null && avgAll > best ? Math.round(((avgAll - best) / avgAll) * 100) : null;
   const stability =
-    st.services.length === 0 || !Object.keys(st.sweepResults).length
+    st.services.length === 0 || !anyResultAtAll
       ? { label: "—", cls: "text-muted-foreground" }
       : okServices.length === st.services.length
-        ? { label: "عالی", cls: "text-emerald-600 dark:text-emerald-400" }
+        ? { label: t("dash.stabilityGreat"), cls: "text-emerald-600 dark:text-emerald-400" }
         : okServices.length >= st.services.length * 0.6
-          ? { label: "خوب", cls: "text-primary" }
-          : { label: "ضعیف", cls: "text-rose-600 dark:text-rose-400" };
+          ? { label: t("dash.stabilityGood"), cls: "text-primary" }
+          : { label: t("dash.stabilityPoor"), cls: "text-rose-600 dark:text-rose-400" };
 
-  /* results order: activation order while sweeping, best-first after */
+  /* results order: activation order while sweeping; afterwards REAL game reach
+     first (tcp), then the rest by DNS RTT — never a blind "lowest wins". */
   const ordered = (() => {
     if (st.sweeping) return st.services;
+    const kindRank = { tcp: 0, server: 1, dns: 2 } as const;
     const scored = st.services.map((m, i) => {
-      const b = bestMsOf(m, st.sweepResults);
-      return { m, i, score: b ?? (hasResultOf(m, st.sweepResults) ? 50000 : 60000) };
+      const b = bestOfMeta(m, st.sweepResults);
+      const score = b
+        ? kindRank[b.kind] * 100000 + b.ms
+        : hasResultOf(m, st.sweepResults)
+          ? 500000
+          : 600000;
+      return { m, i, score };
     });
     return scored.sort((a, b) => a.score - b.score || a.i - b.i).map((x) => x.m);
   })();
 
   const powerBadge = busy
     ? st.dnsAction === "apply"
-      ? { text: "در حال وصل کردن...", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
+      ? { text: t("dash.applying"), cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
       : st.dnsAction === "off"
-        ? { text: "در حال خاموش کردن...", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
-        : { text: "یک لحظه...", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
+        ? { text: t("dash.turningOff"), cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
+        : { text: t("dash.moment"), cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" }
     : dnsOn
-      ? { text: "DNS روشنه", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" }
-      : { text: "DNS خاموشه", cls: "bg-muted/70 text-muted-foreground" };
+      ? { text: t("dash.dnsOn"), cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" }
+      : { text: t("dash.dnsOff"), cls: "bg-muted/70 text-muted-foreground" };
 
   return (
     <div className="h-full overflow-y-auto p-5 pt-2" dir="rtl">
@@ -570,18 +647,19 @@ export function Dashboard() {
             <GameGlyph icon={game.icon} className="h-8 w-8" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-muted-foreground">بازی انتخابی — پینگ‌ها برای همین سنجیده می‌شن</p>
+            <p className="text-[10px] text-muted-foreground">{t("dash.gameBanner")}</p>
             <p className="text-sm font-black" dir="rtl">
               {game.name}
               <span className="ltr ms-2 text-[10px] font-medium text-muted-foreground">{game.latin}</span>
             </p>
             <p className="truncate text-[10px] text-muted-foreground">
-              دامنه: <span className="ltr font-mono">{primaryProbeHost(game)}</span> · پورت‌ها:{" "}
+              {t("dash.domain")} <span className="ltr font-mono">{primaryProbeHost(game)}</span> ·{" "}
+              {t("dash.ports")}{" "}
               <span className="ltr font-mono">{game.tcpPorts.join(", ")}</span>
               {dnsOn && (
                 <>
                   {" "}· <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                    {st.sysMatch ? `${st.sysMatch.name} روی سیستم فعاله` : "DNS دستی فعاله"}
+                    {st.sysMatch ? t("dash.activeOnSys", { name: st.sysMatch.name }) : t("dash.manualActive")}
                   </span>
                 </>
               )}
@@ -591,16 +669,16 @@ export function Dashboard() {
             onClick={() => st.setView("optimize")}
             className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-3.5 py-2 text-[11px] font-bold text-primary transition-colors hover:bg-primary/20"
           >
-            تغییر بازی
-            <ChevronLeft className="h-3.5 w-3.5" />
+            {t("dash.changeGame")}
+            <ChevronLeft className="h-3.5 w-3.5 rtl:-rotate-180" />
           </button>
         </section>
       ) : (
         <section className="panel p-4 text-center">
           <p className="text-xs text-muted-foreground">
-            هنوز بازی‌ای انتخاب نشده —{" "}
+            {t("dash.noGameYet")}{" "}
             <button onClick={() => st.setView("optimize")} className="font-bold text-primary hover:underline">
-              انتخاب بازی
+              {t("dash.pickGame")}
             </button>
           </p>
         </section>
@@ -615,7 +693,7 @@ export function Dashboard() {
               <button
                 onClick={togglePower}
                 disabled={busy}
-                aria-label={dnsOn ? "خاموش کردن DNS سیستم" : "وصل کردن DNS روی سیستم"}
+                aria-label={dnsOn ? t("dash.turnOff") : t("dash.connectName", { name: "DNS" })}
                 className={`power-btn group ${dnsOn ? "is-on" : ""} ${busy ? "is-busy" : ""}`}
               >
                 <span className="power-core">
@@ -631,31 +709,29 @@ export function Dashboard() {
               </span>
               <p className="mt-1.5 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground">
                 {busy
-                  ? "پنجره تأیید دسترسی مدیر (UAC) را تأیید کن"
+                  ? t("dash.uacHint")
                   : dnsOn
                     ? st.sysMatch
-                      ? `${st.sysMatch.name} روی سیستم فعاله — با دکمه بالا خاموشش کن`
-                      : "DNS دستی روی سیستم فعاله — با دکمه بالا به حالت خودکار برمی‌گرده"
+                      ? t("dash.onHintNamed", { name: st.sysMatch.name })
+                      : t("dash.onHintManual")
                     : powerTarget
-                      ? `با دکمه برق، ${powerTarget.name} (${powerTarget.ips.join(" ، ")}) روی ویندوز فعال می‌شود`
-                      : "اول از بخش سرورها یک DNS فعال کن"}
+                      ? t("dash.powerWillApply", { name: powerTarget.name, ips: powerTarget.ips.join(", ") })
+                      : t("dash.powerNoTarget")}
               </p>
               {st.dnsUnhealthy && !busy && (
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-rose-500/10 px-4 py-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-400">
-                  <span>
-                    DNS فعلی ۳ بار پشت‌سرهم جواب نداد — اینترنت از همین مسیر رد نمی‌شه. یا DNS دیگه‌ای وصل کن یا خاموشش کن.
-                  </span>
+                  <span>{t("dash.unhealthy")}</span>
                   <button
                     onClick={() => st.checkConnection()}
                     className="rounded-full bg-rose-500/15 px-3 py-1 transition-colors hover:bg-rose-500/25"
                   >
-                    تست دوباره
+                    {t("dash.retest")}
                   </button>
                   <button
                     onClick={() => st.disconnectDns()}
                     className="rounded-full bg-rose-500 px-3 py-1 text-white transition-colors hover:bg-rose-500/90"
                   >
-                    خاموش کن
+                    {t("dash.turnOff")}
                   </button>
                 </div>
               )}
@@ -672,7 +748,7 @@ export function Dashboard() {
                 ) : (
                   <Radar className="h-4 w-4" />
                 )}
-                {st.sweeping ? "در حال تست همزمان..." : "تست پینگ سرورها"}
+                {st.sweeping ? t("dash.sweeping") : t("dash.sweep")}
               </button>
               <button
                 onClick={() => setLive((v) => !v)}
@@ -683,7 +759,7 @@ export function Dashboard() {
                 }`}
               >
                 <Activity className="h-4 w-4" />
-                {live ? "توقف پایش زنده" : "پایش زنده"}
+                {live ? t("dash.liveStop") : t("dash.liveStart")}
               </button>
               {!dnsOn && st.bestService && (
                 <button
@@ -692,7 +768,7 @@ export function Dashboard() {
                   className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-5 py-2.5 text-xs font-bold text-emerald-600 transition-colors hover:bg-emerald-500/25 disabled:opacity-50 dark:text-emerald-400"
                 >
                   <Plug className="h-4 w-4" />
-                  وصل بهترین ({st.bestService.ms}ms)
+                  {t("dash.connectBest", { ms: st.bestService.ms })}
                 </button>
               )}
             </div>
@@ -701,29 +777,33 @@ export function Dashboard() {
             <div className="mt-6 flex items-stretch justify-center divide-x divide-x-reverse divide-border/60">
               <StatItem
                 icon={<Timer className="h-3 w-3" />}
-                label="بهترین تأخیر سرور بازی"
+                label={t("dash.statBest")}
                 value={best !== null ? <span className="ltr">{best} ms</span> : "—"}
                 sub={
                   avgAll !== null ? (
-                    <span className="ltr">میانگین: {avgAll} ms · TCP/443</span>
+                    <span className="ltr">{t("dash.statBestSub", { ms: avgAll })}</span>
+                  ) : anyResultAtAll ? (
+                    t("dash.statNoRoute")
                   ) : (
-                    "هنوز تستی نرفته"
+                    t("dash.statNoTest")
                   )
                 }
               />
               <StatItem
                 icon={<ArrowDown className="h-3 w-3" />}
-                label="کاهش پینگ"
+                label={t("dash.statImprove")}
                 value={improvement !== null ? <span className="ltr">%{improvement}</span> : "—"}
-                sub="نسبت به میانگین سرورها"
+                sub={t("dash.statImproveSub")}
               />
               <StatItem
                 icon={<ShieldCheck className="h-3 w-3" />}
-                label="پایداری اتصال"
+                label={t("dash.statStability")}
                 value={<span className={stability.cls}>{stability.label}</span>}
                 sub={
                   Object.keys(st.sweepResults).length > 0
-                    ? `${okServices.length} از ${st.services.length} سرویس پاسخ داد`
+                    ? reachedServices.length > 0
+                      ? t("dash.stabilitySubReach", { ok: reachedServices.length, n: st.services.length })
+                      : t("dash.stabilitySub", { ok: okServices.length, n: st.services.length })
                     : "—"
                 }
               />
@@ -734,11 +814,9 @@ export function Dashboard() {
           {st.services.length > 0 ? (
             <section className="panel overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-1 px-4 pb-2 pt-4">
-                <h2 className="text-sm font-bold">نتایج تست سرورها</h2>
+                <h2 className="text-sm font-bold">{t("dash.resultsTitle")}</h2>
                 <p className="text-[10px] text-muted-foreground">
-                  {st.sweeping
-                    ? "هر سرویس با هر دو DNS خودش همزمان تست می‌شود"
-                    : "هر سرویس با هر دو DNS خودش — مرتب‌شده از بهترین"}
+                  {st.sweeping ? t("dash.resultsSubLive") : t("dash.resultsSub")}
                 </p>
               </div>
               <div className="divide-y divide-border/50 px-1.5 pb-1.5">
@@ -750,14 +828,14 @@ export function Dashboard() {
           ) : (
             <section className="panel p-5 text-center">
               <p className="text-xs leading-relaxed text-muted-foreground">
-                هنوز سرویسی فعال نکردی —{" "}
+                {t("dash.noServices")}{" "}
                 <button
                   onClick={() => st.setView("servers")}
                   className="font-bold text-primary hover:underline"
                 >
-                  از بخش سرورها
+                  {t("dash.fromServers")}
                 </button>{" "}
-                حداقل یک DNS اضافه کن.
+                {t("dash.addOneDns")}
               </p>
             </section>
           )}
@@ -772,7 +850,7 @@ export function Dashboard() {
             <div className="mb-2 flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-sm font-bold">
                 <Activity className="h-4 w-4 text-primary" />
-                پایش زنده
+                {t("dash.liveTitle")}
               </h2>
               <button
                 onClick={() => setLive((v) => !v)}
@@ -787,30 +865,30 @@ export function Dashboard() {
                     live ? "animate-pulse bg-emerald-500" : "bg-muted-foreground/50"
                   }`}
                 />
-                {live ? "لایو" : "خاموش"}
+                {live ? t("dash.liveOn") : t("dash.liveOff")}
               </button>
             </div>
 
             {liveTarget ? (
               <>
                 <p className="mb-2 truncate text-[10px] text-muted-foreground">
-                  از طریق: <span className="ltr font-mono">{liveTarget.label}</span>
+                  {t("dash.via")} <span className="ltr font-mono">{liveTarget.label}</span>
                   {domain && (
                     <>
                       {" "}
-                      · دامنه <span className="ltr font-mono">{domain}</span>
+                      · {t("dash.targetDomain")} <span className="ltr font-mono">{domain}</span>
                     </>
                   )}
                 </p>
                 <div className="mb-3 flex items-stretch justify-between divide-x divide-x-reverse divide-border/50">
                   <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
-                    <p className="text-[9px] text-muted-foreground">پینگ فعلی</p>
+                    <p className="text-[9px] text-muted-foreground">{t("dash.curPing")}</p>
                     <p className={`ltr text-lg font-black ${latencyClass(liveStats.cur)}`}>
                       {liveStats.cur !== null ? liveStats.cur : "—"}
                     </p>
                   </div>
                   <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
-                    <p className="text-[9px] text-muted-foreground">میانگین / جیتر</p>
+                    <p className="text-[9px] text-muted-foreground">{t("dash.avgJitter")}</p>
                     <p className="ltr text-lg font-black text-primary">
                       {liveStats.avg !== null ? liveStats.avg : "—"}
                       <span className="ms-1 text-[9px] font-bold text-muted-foreground">
@@ -819,7 +897,7 @@ export function Dashboard() {
                     </p>
                   </div>
                   <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 text-center">
-                    <p className="text-[9px] text-muted-foreground">پکت دور ریخته</p>
+                    <p className="text-[9px] text-muted-foreground">{t("dash.loss")}</p>
                     <p
                       className={`text-lg font-black ${
                         liveStats.loss && liveStats.loss > 5
@@ -833,45 +911,58 @@ export function Dashboard() {
                     </p>
                   </div>
                 </div>
-                <LiveChart samples={samples} />
+                <LiveChart
+                  samples={samples}
+                  aria={t("chart.aria")}
+                  empty={t("chart.empty")}
+                  samplesLabel={(n) => t("chart.samples", { n })}
+                />
                 <p className="mt-1.5 text-center text-[9px] text-muted-foreground">
                   {liveStats.kind === "tcp"
-                    ? "هر ۲ ثانیه یک دست‌دادن TCP به سرور بازی "
-                    : liveStats.kind === "server"
-                      ? "هر ۲ ثانیه یک دست‌دادن TCP به سرور DNS "
-                      : "هر ۲ ثانیه یک کوئری DNS "}
+                    ? t("dash.kindTcp")
+                    : liveStats.kind === "region"
+                      ? t("dash.kindRegion")
+                      : liveStats.kind === "server"
+                        ? t("dash.kindServer")
+                        : t("dash.kindDns")}
                   {game?.tcpPorts.length && liveStats.kind === "tcp" ? (
                     <span className="ltr">
-                      (پورت {game.tcpPorts.join("/")}، ۴۴۳)
+                      {" "}({t("dash.portTag", { ports: game.tcpPorts.join("/") })})
                     </span>
                   ) : null}{" "}
                   — {liveStats.kind === "server"
-                    ? "این پینگ واقعی شبکه تا سرور DNS است، نه پینگ داخل گیم (UDP)"
-                    : liveStats.kind === "dns"
-                      ? "این زمان پاسخ DNS است، نه پینگ داخل گیم (UDP)"
-                      : "این تأخیرِ رسیدن به سرور است، نه پینگ داخل گیم (UDP)"}{" "}
-                  {pingQuality(liveStats.avg).label !== "—"
-                    ? `· کیفیت: ${pingQuality(liveStats.avg).label}`
-                    : "· در انتظار داده"}
+                    ? t("dash.noteServer")
+                    : liveStats.kind === "region"
+                      ? t("dash.noteRegion")
+                      : liveStats.kind === "dns"
+                        ? t("dash.noteDns")
+                        : t("dash.noteTcp")}{" "}
+                  {pingQuality(liveStats.avg, st.lang).label !== "—"
+                    ? `· ${t("dash.quality", { q: pingQuality(liveStats.avg, st.lang).label })}`
+                    : t("dash.waitData")}
                 </p>
-                {liveStats.kind === "server" && (
+                {liveStats.kind === "region" && (
                   <p className="mt-1 flex items-start justify-center gap-1 text-center text-[9px] leading-relaxed text-cyan-600 dark:text-cyan-400">
                     <Info className="mt-0.5 h-3 w-3 shrink-0" />
-                    سرور بازی از این مسیر در دسترس نیست (تحریم/فیلترینگ — رایج در ایران بدون VPN). عدد بالا پینگ واقعی تا سرور DNS است؛ برای پینگ واقعی بازی، VPN را روشن کن.
+                    {t("dash.regionInfo")}
                   </p>
                 )}
-                {liveStats.total > 0 && liveStats.kind !== "tcp" && liveStats.kind !== "server" && (
+                {liveStats.total > 0 && liveStats.kind !== "tcp" && liveStats.kind !== "region" && liveStats.kind !== "server" && (
                   <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
                     <Info className="h-3 w-3 shrink-0" />
-                    {liveStats.kind === "dns"
-                      ? "پورت بازی جواب نداد — عدد بالا زمان پاسخ DNS است، نه پینگ واقعی سرور بازی"
-                      : "بخشی از نمونه‌ها فقط زمان DNS بود — پینگ نمایش‌داده‌شده از دست‌دادن واقعی سرور بازی گرفته شده"}
+                    {t("dash.noteDnsPort")}
+                  </p>
+                )}
+                {liveStats.total > 0 && liveStats.kind === "mixed" && (
+                  <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
+                    <Info className="h-3 w-3 shrink-0" />
+                    {t("dash.noteMixed")}
                   </p>
                 )}
               </>
             ) : (
               <p className="py-6 text-center text-xs text-muted-foreground">
-                اول یک سرور انتخاب یا تست کن تا پایش زنده روشن شود.
+                {t("dash.needTarget")}
               </p>
             )}
           </section>
