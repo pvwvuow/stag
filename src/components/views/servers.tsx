@@ -6,6 +6,7 @@ import { useStag, DNS_CATALOG, MAX_SERVICES } from "@/components/stag-store";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { FlagCircle, SignalBars } from "@/components/views/dashboard";
+import { InterceptBanner } from "@/components/intercept-banner";
 import { reachLabel, groupLabel, groupHint, DNS_GROUPS, type DnsGroup } from "@/lib/dns-catalog";
 
 const REACH_PILL = {
@@ -27,13 +28,18 @@ function IpChip({ ip, sweep }: { ip: string; sweep?: { ok: boolean; ms: number |
     <span className="flex items-center gap-2 rounded-full bg-muted/60 px-2.5 py-1">
       <span className="ltr font-mono text-[11px] text-foreground/90">{ip}</span>
       {sweep ? (
-        sweep.ok ? (
+        sweep.ok && sweep.ms !== null ? (
           <>
             <span className="ltr text-[11px] font-bold text-primary">{sweep.ms} ms</span>
             <SignalBars ms={sweep.ms} />
           </>
+        ) : sweep.ok ? (
+          /* beta.7 — DNS did not answer a real query: no honest number */
+          <span className="text-[10px] font-bold text-rose-500" title={t("dash.noDnsAnswerTip")}>
+            {t("dash.noDnsAnswer")}
+          </span>
         ) : (
-          <span className="text-[10px] text-muted-foreground">بی‌پاسخ</span>
+          <span className="text-[10px] text-muted-foreground">{t("dash.noReply")}</span>
         )
       ) : (
         <span className="text-[10px] text-muted-foreground/60">{t("srv.notTested")}</span>
@@ -162,6 +168,9 @@ export function Servers() {
 
   return (
     <div className="h-full min-h-0 space-y-5 overflow-y-auto p-5" dir="rtl">
+      {/* beta.7 — on-path DNS interception explainer (same detector as dashboard) */}
+      <InterceptBanner />
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-lg font-black">

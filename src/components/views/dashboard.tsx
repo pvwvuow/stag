@@ -23,6 +23,7 @@ import { groupLabel as dnsGroupLabel } from "@/lib/dns-catalog";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
 import { apiFetch } from "@/lib/api-client";
 import { LiveChart, type LiveSample } from "@/components/ping-chart";
+import { InterceptBanner } from "@/components/intercept-banner";
 import { flagUrl, latencyClass, pingQuality } from "@/components/ui-helpers";
 import { useToast } from "@/hooks/use-toast";
 import { GameGlyph } from "@/components/brand";
@@ -108,24 +109,25 @@ function bestMsOf(meta: ServiceMeta, sweep: Record<string, SweepResult>): number
 }
 
 /**
- * beta.5 — WHAT the best number of this service actually is. The dashboard
+ * beta.7 — WHAT the best number of this service actually is. The dashboard
  * used to show any result as a green "ping", so when game servers were
  * sanctions-blocked every DNS looked great on its DNS-server RTT alone —
- * exactly the fake-good feeling the optimizer does not have. Now the kind
- * drives the label, the color AND the ranking.
+ * exactly the fake-good feeling the optimizer does not have. Since beta.7
+ * the TCP:53 "server" number is gone from the chain entirely (ISP
+ * middleboxes fake it identically for every DNS) — a service either reached
+ * the game (tcp) or has only its real DNS query time (dns), or it has NO
+ * number at all because it did not answer.
  */
 function bestOfMeta(
   meta: ServiceMeta,
   sweep: Record<string, SweepResult>,
-): { ms: number; kind: "tcp" | "server" | "dns" } | null {
+): { ms: number; kind: "tcp" | "dns" } | null {
   const ok = meta.ips
     .map((ip) => sweep[ip])
     .filter((r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number");
   if (ok.length === 0) return null;
   const tcp = ok.filter((r) => r.msKind === "tcp").map((r) => r.ms);
   if (tcp.length > 0) return { ms: Math.min(...tcp), kind: "tcp" };
-  const server = ok.filter((r) => r.msKind === "server").map((r) => r.ms);
-  if (server.length > 0) return { ms: Math.min(...server), kind: "server" };
   return { ms: Math.min(...ok.map((r) => r.ms)), kind: "dns" };
 }
 
@@ -154,7 +156,18 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
       </span>
       {pending ? (
         <Loader2 className="h-3 w-3 animate-spin text-primary" />
-      ) : r.ok ? (
+      ) : !r.ok ? (
+        <span className="text-[10px] font-bold text-rose-500">{t("dash.noReply")}</span>
+      ) : r.ms === null ? (
+        /* beta.7 — request reached the API but the DNS answered no real
+           query: there is NO honest number, never fake one from TCP:53 */
+        <span
+          className="text-[10px] font-bold text-rose-500"
+          title={t("dash.noDnsAnswerTip")}
+        >
+          {t("dash.noDnsAnswer")}
+        </span>
+      ) : (
         <>
           <span className={`ltr text-sm font-black leading-none ${latencyClass(r.ms)}`}>
             {r.ms}
@@ -174,14 +187,6 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
               {t("dash.dnsTime")}
             </span>
           )}
-          {r.msKind === "server" && (
-            <span
-              className="text-[8px] font-medium text-cyan-600 dark:text-cyan-400"
-              title={t("dash.dnsServerPingTip")}
-            >
-              {t("dash.dnsServerPing")}
-            </span>
-          )}
           {r.tcpOk === false && (
             <span className="text-[8px] font-medium text-amber-600 dark:text-amber-400">
               {t("dash.portBlocked")}
@@ -193,8 +198,6 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
             </span>
           )}
         </>
-      ) : (
-        <span className="text-[10px] font-bold text-rose-500">{t("dash.noReply")}</span>
       )}
     </span>
   );
@@ -480,7 +483,7 @@ export function Dashboard() {
       if (!target) return;
       let ok = false;
       let ms: number | null = null;
-      let msKind: "tcp" | "region" | "server" | "dns" | null = null;
+      let msKind: "tcp" | "region" | "dns" | null = null;
       let tcpOk: boolean | null = null;
       try {
         const r = await apiFetch("/api/ping", {
@@ -502,6 +505,10 @@ export function Dashboard() {
         ms = d.ok ? (d.ms ?? null) : null;
         msKind = d.ok ? (d.msKind ?? null) : null;
         tcpOk = d.tcpOk ?? null;
+        // beta.7 — interception verdict rides every reply (cached server-side)
+        if (d.intercepted === true || d.intercepted === false) {
+          st.reportIntercept({ intercepted: d.intercepted, interceptorMs: d.interceptorMs ?? null });
+        }
       } catch {
         ok = false;
       }
@@ -520,36 +527,29 @@ export function Dashboard() {
   }, [live]);
 
   const liveStats = useMemo(() => {
-    /* beta.5 — honesty chain for the headline: real game TCP RTT first; then
+    /* beta.7 — honesty chain for the headline: real game TCP RTT first; then
        the REGIONAL game-path RTT (geo-pinned EU anchors — the closest number
-       to what the user actually sees in-game, e.g. Frankfurt ~130ms); then
-       the DNS-server RTT; then DNS query time. The DNS number is now the
-       LAST resort, per the user's explicit feedback ("not my DNS's ping"). */
+       to what the user actually sees in-game, e.g. Frankfurt ~130ms, only
+       shown when the DNS itself answers); then the DNS query time. The
+       TCP:53 "DNS-server ping" is gone from the chain — middleboxes faked
+       it identically for every DNS. When nothing answers, there is NO
+       number and the monitor says so (lost packets on the chart). */
     const delivered = samples.filter((s) => s.ok && s.ms !== null);
     const tcpVals = delivered.filter((s) => s.msKind === "tcp").map((s) => s.ms as number);
     const regionVals = delivered.filter((s) => s.msKind === "region").map((s) => s.ms as number);
-    const serverVals = delivered.filter((s) => s.msKind === "server").map((s) => s.ms as number);
     const anyVals = delivered.map((s) => s.ms as number);
-    const vals = tcpVals.length
-      ? tcpVals
-      : regionVals.length
-        ? regionVals
-        : serverVals.length
-          ? serverVals
-          : anyVals;
+    const vals = tcpVals.length ? tcpVals : regionVals.length ? regionVals : anyVals;
     /* which kind the headline stats represent right now */
-    const kind: "tcp" | "region" | "server" | "dns" | "mixed" =
+    const kind: "tcp" | "region" | "dns" | "mixed" | "none" =
       delivered.length === 0
-        ? "region"
+        ? "none"
         : tcpVals.length === delivered.length
           ? "tcp"
           : regionVals.length === delivered.length
             ? "region"
-            : serverVals.length === delivered.length
-              ? "server"
-              : serverVals.length === 0 && regionVals.length === 0 && tcpVals.length === 0
-                ? "dns"
-                : "mixed";
+            : regionVals.length === 0 && tcpVals.length === 0
+              ? "dns"
+              : "mixed";
     const cur = vals.length ? vals[vals.length - 1] : null;
     const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
     const min = vals.length ? Math.min(...vals) : null;
@@ -640,6 +640,10 @@ export function Dashboard() {
 
   return (
     <div className="h-full overflow-y-auto p-5 pt-2" dir="rtl">
+      {/* beta.7 — on-path DNS interception: say it LOUDLY before any numbers */}
+      <div className="mb-4">
+        <InterceptBanner />
+      </div>
       {/* selected game — always visible on the dashboard */}
       {game ? (
         <section className="panel-tint flex flex-wrap items-center gap-3 p-4">
@@ -922,20 +926,20 @@ export function Dashboard() {
                     ? t("dash.kindTcp")
                     : liveStats.kind === "region"
                       ? t("dash.kindRegion")
-                      : liveStats.kind === "server"
-                        ? t("dash.kindServer")
+                      : liveStats.kind === "none"
+                        ? t("dash.kindNone")
                         : t("dash.kindDns")}
                   {game?.tcpPorts.length && liveStats.kind === "tcp" ? (
                     <span className="ltr">
                       {" "}({t("dash.portTag", { ports: game.tcpPorts.join("/") })})
                     </span>
                   ) : null}{" "}
-                  — {liveStats.kind === "server"
-                    ? t("dash.noteServer")
-                    : liveStats.kind === "region"
-                      ? t("dash.noteRegion")
-                      : liveStats.kind === "dns"
-                        ? t("dash.noteDns")
+                  — {liveStats.kind === "region"
+                    ? t("dash.noteRegion")
+                    : liveStats.kind === "dns"
+                      ? t("dash.noteDns")
+                      : liveStats.kind === "none"
+                        ? t("dash.noteNone")
                         : t("dash.noteTcp")}{" "}
                   {pingQuality(liveStats.avg, st.lang).label !== "—"
                     ? `· ${t("dash.quality", { q: pingQuality(liveStats.avg, st.lang).label })}`
@@ -947,7 +951,7 @@ export function Dashboard() {
                     {t("dash.regionInfo")}
                   </p>
                 )}
-                {liveStats.total > 0 && liveStats.kind !== "tcp" && liveStats.kind !== "region" && liveStats.kind !== "server" && (
+                {liveStats.total > 0 && (liveStats.kind === "dns" || liveStats.kind === "mixed") && (
                   <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
                     <Info className="h-3 w-3 shrink-0" />
                     {t("dash.noteDnsPort")}

@@ -9,8 +9,9 @@ export interface LiveSample {
   ok: boolean;
   ms: number | null;
   /** which metric `ms` is — real game TCP RTT, regional game-path RTT
-   *  (beta.5), DNS-server TCP:53 RTT, or DNS query time */
-  msKind?: "tcp" | "region" | "server" | "dns" | null;
+   *  (beta.5, only when the DNS answers), or DNS query time; null = the DNS
+   *  answered no real query (beta.7: no fake TCP:53 number anymore) */
+  msKind?: "tcp" | "region" | "dns" | null;
   /** game-server TCP reachability for this probe (null = TCP not attempted) */
   tcpOk?: boolean | null;
 }

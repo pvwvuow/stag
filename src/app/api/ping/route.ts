@@ -57,6 +57,71 @@ async function regionProbe(
   return best;
 }
 
+/* ------------------------------------------------------------------ */
+/* beta.7 — port-53 interception detector (the "non-DNS thing" the     */
+/* user suspected). Iranian ISPs (and common DNS-bypass tools)         */
+/* transparently answer EVERY DNS query on-path — including queries    */
+/* addressed to IPs that cannot possibly run DNS. We send one real     */
+/* UDP query to 192.0.2.1 (RFC 5737 TEST-NET-1 — never allocated, no   */
+/* server can live there) for a random one-shot name:                  */
+/*   • ANY DNS-level reply (answer, NXDOMAIN, SERVFAIL, REFUSED)       */
+/*     => something on-path is impersonating the chosen DNS — every    */
+/*     "DNS ping" and even "it works with any DNS" is that middlebox,  */
+/*     not the selected server.                                        */
+/*   • silence (timeout / unreachable) => no interception.             */
+/* Cached for 2 min so the 2s live cadence and the sweep never pay     */
+/* the probe repeatedly.                                               */
+/* ------------------------------------------------------------------ */
+const HIJACK_PROBE_IP = "192.0.2.1";
+const HIJACK_CACHE_MS = 2 * 60 * 1000;
+let hijackCache: { at: number; intercepted: boolean; ms: number | null } | null = null;
+
+/** DNS-level outcomes prove an interceptor spoke; transport-level
+ *  failures (timeout / no route) prove the packet actually died on the
+ *  way to an IP that has no DNS server — i.e. no interception. */
+const HIJACK_ANSWER_CODES = new Set([
+  "ENOTFOUND", // NXDOMAIN — a real resolver (or faker) answered
+  "ENODATA",
+  "ESERVFAIL",
+  "EREFUSED",
+  "EFORMERR",
+  "EBADRESP",
+  "EBADQUERY",
+  "ECONNREFUSED", // an ICMP port-unreachable in reply is still an on-path speaker
+]);
+
+async function hijackProbe(timeoutMs: number): Promise<{ intercepted: boolean; ms: number | null }> {
+  if (hijackCache && Date.now() - hijackCache.at < HIJACK_CACHE_MS) {
+    return { intercepted: hijackCache.intercepted, ms: hijackCache.ms };
+  }
+  // random one-shot name — defeats any answer cache the middlebox holds
+  const name = `${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}.com`;
+  const r = new Resolver({ timeout: Math.min(timeoutMs, 1500), tries: 1 });
+  let intercepted = false;
+  let ms: number | null = null;
+  const start = performance.now();
+  try {
+    r.setServers([HIJACK_PROBE_IP]);
+    await r.resolve4(name);
+    intercepted = true;
+    ms = Math.round(performance.now() - start);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? "";
+    if (HIJACK_ANSWER_CODES.has(code)) {
+      intercepted = true;
+      ms = Math.round(performance.now() - start);
+    }
+  } finally {
+    try {
+      r.cancel();
+    } catch {
+      /* noop */
+    }
+  }
+  hijackCache = { at: Date.now(), intercepted, ms };
+  return { intercepted, ms };
+}
+
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
@@ -88,8 +153,15 @@ const MAX_PROBE_PORTS = PING_TUNING.maxProbePorts;
  *     the user can still play (their own example: Frankfurt 130ms in-match),
  *     this is the closest honest approximation of the in-game ping — labelled
  *     "region" and NEVER mixed into sweep ranking (DNS-independent).
- *  5. Fallback chain: game TCP RTT -> region anchor RTT (region mode only)
- *     -> DNS-server TCP:53 RTT -> DNS query time.
+ *  5. Fallback chain (beta.7, rewritten): game TCP RTT -> region anchor RTT
+ *     (region mode only, and ONLY when this DNS actually answered a real
+ *     query) -> DNS query time (only with a real answer) -> NO NUMBER.
+ *     The old DNS-server TCP:53-handshake fallback is GONE: Iranian ISP
+ *     middleboxes answer SYN to any IP:53, so that number was identical
+ *     for every DNS — a fake "ping" for servers that cannot resolve at
+ *     all (the exact bug the user caught: "all DNS show the same ping,
+ *     even ones STAG says won't work"). A server that did not answer a
+ *     real query now honestly returns ms=null.
  * `server: "system"` uses the OS resolver (after STAG applies a DNS, live
  * monitoring shows the real experience through it); the server probe then
  * targets the first current system server.
@@ -194,6 +266,8 @@ export async function POST(req: NextRequest) {
         .filter((p) => Number.isInteger(p) && p > 0 && p < 65536),
     ),
   ];
+  // beta.7 — interception probe kicks off at the same tick (cached 2 min).
+  const hijackP = hijackProbe(Math.min(queryTimeout, 1500));
   if (ports.length === 0 || !ports.includes(443)) ports.push(443);
   const probePorts = ports.slice(0, MAX_PROBE_PORTS);
 
@@ -245,6 +319,9 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => (net.isIP(a) === 4 ? 0 : 1) - (net.isIP(b) === 4 ? 0 : 1));
     const firstIp = resolved[0] ?? null;
     const privateIp = firstIp ? isPrivateIp(firstIp) : false;
+    // beta.7 — did THIS DNS actually answer a real query? Without a real
+    // answer there is no honest latency number for this server at all.
+    const resolvedOk = resolved.length > 0;
 
     // Realistic game RTT: race TCP handshakes across several resolved IPs and
     // the game's real ports; the fastest success is the honest number.
@@ -298,20 +375,29 @@ export async function POST(req: NextRequest) {
     const serverIp = probeTarget;
     const rg = await regionP;
 
-    // `ms` is the number STAG surfaces as the headline latency, with a strict
-    // honesty chain: real game-server TCP RTT ("tcp") -> regional game-path
-    // RTT ("region", region mode only) -> DNS-server TCP:53 RTT ("server") ->
-    // DNS query time ("dns"). `msKind` tells the client exactly which one it
-    // is so the UI never passes a DNS lookup off as a game ping ("داده غلط")
-    // — and so a sanctioned-game TCP block from Iran still leaves the user a
-    // real, labelled number instead of a blank.
-    const ms = tcpMs ?? rg.ms ?? serverTcpMs ?? dnsMs;
-    const msKind: "tcp" | "region" | "server" | "dns" =
-      tcpMs !== null ? "tcp" : rg.ms !== null ? "region" : serverTcpMs !== null ? "server" : "dns";
+    // `ms` is the number STAG surfaces as the headline latency, with the
+    // beta.7 honesty chain: real game-server TCP RTT ("tcp") -> regional
+    // game-path RTT ("region", region mode only, ONLY when this DNS really
+    // answered) -> DNS query time ("dns", only with a real answer) -> null.
+    // A DNS that did not answer gets NO number — the TCP:53 handshake that
+    // used to fill the gap is answered by ISP middleboxes in Iran and made
+    // every server look alive with the same ping (user-reported bug).
+    // `serverTcpMs` stays in the response as a clearly-labelled diagnostic.
+    const ms = tcpMs ?? (resolvedOk ? (body.region === true && rg.ms !== null ? rg.ms : dnsMs) : null);
+    const msKind: "tcp" | "region" | "dns" | null =
+      tcpMs !== null
+        ? "tcp"
+        : resolvedOk
+          ? body.region === true && rg.ms !== null
+            ? "region"
+            : "dns"
+          : null;
+    const hj = await hijackP;
     return NextResponse.json({
       ok: true,
       ms,
       msKind,
+      resolvedOk,
       dnsMs,
       tcpMs,
       tcpOk,
@@ -324,16 +410,20 @@ export async function POST(req: NextRequest) {
       viaPort,
       viaIp,
       privateIp,
+      intercepted: hj.intercepted,
+      interceptorMs: hj.ms,
       server: useSystem ? "system" : rawServer,
       domain,
       ip: firstIp,
     });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
+    const hj = await hijackP.catch(() => ({ intercepted: false, ms: null }));
     return NextResponse.json({
       ok: false,
       ms: null,
       msKind: null,
+      resolvedOk: false,
       dnsMs: null,
       tcpMs: null,
       tcpOk: null,
@@ -346,6 +436,8 @@ export async function POST(req: NextRequest) {
       viaPort: null,
       viaIp: null,
       privateIp: false,
+      intercepted: hj.intercepted,
+      interceptorMs: hj.ms,
       server: useSystem ? "system" : rawServer,
       domain,
       ip: null,

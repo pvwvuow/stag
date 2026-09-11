@@ -71,8 +71,8 @@ const fa: Record<string, string> = {
   "dash.privateIpTip": "DNS یک IP داخلی داد",
   "dash.dnsTime": "زمان DNS",
   "dash.dnsTimeTip": "پورت بازی جواب نداد — این عدد زمان کوئری DNS است، نه پینگ سرور بازی",
-  "dash.dnsServerPing": "پینگ سرور DNS",
-  "dash.dnsServerPingTip": "سرور بازی از این مسیر در دسترس نیست — این عدد پینگ واقعی شبکه تا سرور DNS است (دست‌دادن TCP:53)",
+  "dash.noDnsAnswer": "بی‌پاسخ DNS",
+  "dash.noDnsAnswerTip": "این سرور به کوئری واقعی DNS جواب نداد — هیچ عدد صادقانه‌ای برای نمایش وجود ندارد",
 
   /* ---------------- dashboard: system card ---------------- */
   "dash.sysDnsTitle": "وضعیت DNS سیستم",
@@ -152,19 +152,23 @@ const fa: Record<string, string> = {
   "dash.loss": "پکت‌لاس",
   "dash.kindTcp": "هر ۲ ثانیه یک دست‌دادن TCP به سرور بازی",
   "dash.kindRegion": "هر ۲ ثانیه سنجش TCP تا سرورهای منطقه‌ای بازی (اروپا)",
-  "dash.kindServer": "هر ۲ ثانیه یک دست‌دادن TCP به سرور DNS",
   "dash.kindDns": "هر ۲ ثانیه یک کوئری DNS",
+  "dash.kindNone": "منتظر اولین پاسخ معتبر…",
   "dash.portTag": "پورت {ports}، ۴۴۳",
   "dash.noteTcp": "این تأخیرِ رسیدن به سرور است، نه پینگ داخل گیم (UDP)",
   "dash.noteRegion": "نزدیک‌ترین عدد به پینگی که داخل بازی می‌بینی؛ پینگ واقعی UDP داخل مچ ممکن است کمی متفاوت باشد",
-  "dash.noteServer": "این پینگ واقعی شبکه تا سرور DNS است، نه پینگ داخل گیم (UDP)",
   "dash.noteDns": "این زمان پاسخ DNS است، نه پینگ داخل گیم (UDP)",
+  "dash.noteNone": "هیچ پاسخی نرسید — اگر ادامه پیدا کند، DNS انتخابی جواب نمی‌دهد",
   "dash.quality": "کیفیت: {q}",
   "dash.waitData": "· در انتظار داده",
   "dash.noteDnsPort": "پورت بازی جواب نداد — عدد بالا زمان پاسخ DNS است، نه پینگ واقعی سرور بازی",
   "dash.noteMixed": "بخشی از نمونه‌ها فقط زمان DNS بود — پینگ نمایش‌داده‌شده از دست‌دادن واقعی سرور بازی گرفته شده",
   "dash.regionInfo": "سرور بازی از این مسیر در دسترس نیست (تحریم/فیلترینگ — رایج در ایران بدون VPN). عدد بالا مسیر شبکه تا سرورهای منطقه‌ای بازی در اروپاست؛ تقریباً همان پینگی که داخل بازی می‌بینی.",
   "dash.needTarget": "اول یک سرور انتخاب یا تست کن تا پایش زنده روشن شود.",
+
+  /* ---------------- beta.7: DNS interception ---------------- */
+  "dash.interceptTitle": "رهگیری DNS شناسایی شد",
+  "dash.interceptBody": "چیزی غیر از سرورهای DNS به کوئری‌های تو جواب می‌دهد — میدان‌بان ISP، مودم یا یک ابزار روی سیستم. اثباتش: کوئری به یک آی‌پی که هیچ DNSی ندارد هم جواب گرفت (حدود {ms}ms). برای همین همه‌ی DNSها پینگ یکسان نشان می‌دهند و اینترنت با هر DNSای «کار می‌کند» — حتی وقتی STAG می‌گوید آن DNS جواب نمی‌دهد. پاسخ واقعی از سرور انتخابی نمی‌آید؛ عدد‌های DNS در STAG حالا فقط وقتی نشان داده می‌شوند که سرور واقعاً جواب داده باشد.",
 
   /* ---------------- chart ---------------- */
   "chart.aria": "نمودار زنده پکت‌ها",
@@ -454,8 +458,8 @@ const en: Record<string, string> = {
   "dash.privateIpTip": "The DNS returned a private-range IP",
   "dash.dnsTime": "DNS time",
   "dash.dnsTimeTip": "The game port didn't answer — this is the DNS query time, not game-server ping",
-  "dash.dnsServerPing": "DNS server ping",
-  "dash.dnsServerPingTip": "Game server unreachable via this path — this is the real network RTT to the DNS server (TCP:53 handshake)",
+  "dash.noDnsAnswer": "No DNS answer",
+  "dash.noDnsAnswerTip": "This server didn't answer a real DNS query — there is no honest number to show",
 
   /* ---------------- dashboard: system card ---------------- */
   "dash.sysDnsTitle": "System DNS status",
@@ -535,19 +539,23 @@ const en: Record<string, string> = {
   "dash.loss": "Packet loss",
   "dash.kindTcp": "TCP handshake to the game server every 2s",
   "dash.kindRegion": "TCP probe to the game's regional servers (EU) every 2s",
-  "dash.kindServer": "TCP handshake to the DNS server every 2s",
   "dash.kindDns": "A DNS query every 2s",
+  "dash.kindNone": "Waiting for the first valid reply…",
   "dash.portTag": "port {ports}, 443",
   "dash.noteTcp": "This is the latency of reaching the server, not the in-game (UDP) ping",
   "dash.noteRegion": "The closest number to what you see in-game; the real in-match UDP ping may differ slightly",
-  "dash.noteServer": "This is the real network RTT to the DNS server, not the in-game (UDP) ping",
   "dash.noteDns": "This is the DNS response time, not the in-game (UDP) ping",
+  "dash.noteNone": "No reply has arrived — if it keeps up, the selected DNS isn't answering",
   "dash.quality": "quality: {q}",
   "dash.waitData": "· waiting for data",
   "dash.noteDnsPort": "The game port didn't answer — the number above is DNS response time, not real game-server ping",
   "dash.noteMixed": "Some samples were DNS-time only — the shown ping comes from real game-server handshakes",
   "dash.regionInfo": "Game servers are unreachable via this path (sanctions/filtering — common in Iran without a VPN). The number above is the network path to the game's regional servers in Europe — roughly what you see in-game.",
   "dash.needTarget": "Pick or test a server first to start the live monitor.",
+
+  /* ---------------- beta.7: DNS interception ---------------- */
+  "dash.interceptTitle": "DNS interception detected",
+  "dash.interceptBody": "Something other than your DNS servers is answering your queries — an ISP middlebox, the modem, or a tool on this system. Proof: a query to an IP that cannot host any DNS server still got an answer (~{ms}ms). That's why every DNS shows the same ping and why the internet \"works\" with any DNS — even when STAG says that DNS won't answer. Real answers aren't coming from the selected server; STAG now only shows a DNS number when that server actually replied.",
 
   /* ---------------- chart ---------------- */
   "chart.aria": "Live packet chart",

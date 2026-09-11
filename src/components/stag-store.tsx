@@ -69,19 +69,21 @@ export interface ApiResult {
   };
 }
 
-/** Per-IP ping result — `ms` follows the honest chain: game TCP RTT ->
- * DNS-server TCP:53 RTT ("server") -> DNS query time. `msKind` says which. */
+/** Per-IP ping result — `ms` follows the beta.7 honest chain: game TCP RTT ->
+ *  DNS query time — and is NULL when the DNS did not answer a real query.
+ *  (The old TCP:53-handshake "server" fallback is gone: ISP middleboxes
+ *  answer SYN to any IP:53, which faked an identical ping for every DNS.) */
 export interface SweepResult {
   ok: boolean;
   ms: number | null;
-  /** which metric `ms` actually is: real game-server TCP RTT, DNS-server
-   *  TCP:53 RTT, or DNS query time */
-  msKind?: "tcp" | "region" | "server" | "dns" | null;
+  /** which metric `ms` actually is: real game-server TCP RTT or DNS query
+   *  time; null => the DNS did not answer, there is no honest number */
+  msKind?: "tcp" | "region" | "dns" | null;
   dnsMs: number | null;
   tcpMs: number | null;
   tcpOk: boolean | null;
-  /** TCP:53 handshake to the DNS server itself (Iran fix — measurable even
-   *  when the game servers are blocked) */
+  /** TCP:53 handshake to the DNS server itself — DIAGNOSTIC ONLY: ISP
+   *  middleboxes answer it for any IP, so it must never be a headline */
   serverTcpMs?: number | null;
   serverTcpOk?: boolean | null;
   /** game port that produced the RTT (null => DNS-time fallback) */
@@ -177,17 +179,27 @@ export const MAX_SERVICES = 12;
  * hide a service that answers fast, and a tiny DNS-time must never beat a
  * service that actually reached the game server.
  */
+/** beta.7 — port-53 interception probe result reported by /api/ping. */
+export interface InterceptState {
+  /** true => something on-path (ISP middlebox or a local DNS tool) answers
+   *  DNS for arbitrary IPs — every "DNS ping" is that middlebox's RTT, not
+   *  the selected server's. null => not measured yet. */
+  intercepted: boolean | null;
+  /** RTT of the middlebox itself (the identical number every DNS shows) */
+  interceptorMs: number | null;
+}
+
+const NO_INTERCEPT: InterceptState = { intercepted: null, interceptorMs: null };
+
 function bestOfResults(
   results: Array<SweepResult | undefined>,
-): { ms: number; kind: "tcp" | "server" | "dns" } | null {
+): { ms: number; kind: "tcp" | "dns" } | null {
   const ok = results.filter(
     (r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number",
   );
   if (ok.length === 0) return null;
   const tcp = ok.filter((r) => r.msKind === "tcp").map((r) => r.ms);
   if (tcp.length > 0) return { ms: Math.min(...tcp), kind: "tcp" };
-  const server = ok.filter((r) => r.msKind === "server").map((r) => r.ms);
-  if (server.length > 0) return { ms: Math.min(...server), kind: "server" };
   return { ms: Math.min(...ok.map((r) => r.ms)), kind: "dns" };
 }
 
@@ -283,6 +295,9 @@ interface StagContextValue extends StagState {
   dir: "rtl" | "ltr";
   sweeping: boolean;
   sweepResults: Record<string, SweepResult>; // keyed by IP
+  /** beta.7 — on-path DNS interception state (banner + honest pings) */
+  intercept: InterceptState;
+  reportIntercept: (i: InterceptState) => void;
   history: HistoryPoint[];
   fullTest: FullTestState;
   services: ServiceMeta[]; // active services, in activation order
@@ -325,6 +340,14 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<StagState>(DEFAULT_STATE);
   const [sweeping, setSweeping] = useState(false);
   const [sweepResults, setSweepResults] = useState<Record<string, SweepResult>>({});
+  const [intercept, setIntercept] = useState<InterceptState>(NO_INTERCEPT);
+  /** beta.7 — stable reporter: only state CHANGES re-render (the live loop
+   *  calls this every 2s with a mostly-constant value). */
+  const reportIntercept = useCallback((i: InterceptState) => {
+    setIntercept((h) =>
+      h.intercepted === i.intercepted && h.interceptorMs === i.interceptorMs ? h : i,
+    );
+  }, []);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [fullTest, setFullTest] = useState<FullTestState>({
     gameId: null,
@@ -537,15 +560,16 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
     const finish = () => {
       let best: { id: string; ms: number } | null = null;
-      let bestKind: "tcp" | "server" | "dns" = "dns";
-      const kindRank = { tcp: 2, server: 1, dns: 0 } as const;
+      let bestKind: "tcp" | "dns" = "dns";
+      const kindRank = { tcp: 2, dns: 1 } as const;
       const okMsAll: number[] = [];
       for (const m of metas) {
         const b = bestOfResults(m.ips.map((ip) => collected[ip]));
         if (!b) continue;
         okMsAll.push(b.ms);
-        // Prefer a more REAL measurement (game TCP > DNS-server TCP > DNS
-        // query time); within the same kind, prefer the lower latency.
+        // Prefer a more REAL measurement (game TCP > DNS query time); within
+        // the same kind, prefer the lower latency. (The TCP:53 middlebox
+        // number is no longer ranked at all — beta.7.)
         const better =
           !best ||
           kindRank[b.kind] > kindRank[bestKind] ||
@@ -604,7 +628,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           (d: {
             ok?: boolean;
             ms?: number | null;
-            msKind?: "tcp" | "region" | "server" | "dns" | null;
+            msKind?: "tcp" | "region" | "dns" | null;
             dnsMs?: number | null;
             tcpMs?: number | null;
             tcpOk?: boolean | null;
@@ -612,7 +636,13 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             serverTcpOk?: boolean | null;
             viaPort?: number | null;
             privateIp?: boolean;
-          }) =>
+            intercepted?: boolean | null;
+            interceptorMs?: number | null;
+          }) => {
+            // beta.7 — the interception verdict rides every /api/ping reply
+            if (d.intercepted === true || d.intercepted === false) {
+              reportIntercept({ intercepted: d.intercepted, interceptorMs: d.interceptorMs ?? null });
+            }
             apply(ip, {
               ok: !!d.ok,
               ms: d.ok ? (d.ms ?? null) : null,
@@ -624,7 +654,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
               serverTcpOk: d.serverTcpOk ?? null,
               viaPort: d.viaPort ?? null,
               privateIp: !!d.privateIp,
-            }),
+            });
+          },
         )
         .catch(() => {
           if (ctl.signal.aborted) return;
@@ -642,7 +673,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           });
         });
     });
-  }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, t, toast]);
+  }, [sweeping, state.activeServices, state.gameId, state.tcpEnabled, metaFor, t, toast, reportIntercept]);
 
   /* ------------------------ full game test ----------------------- */
 
@@ -717,8 +748,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
   const bestService = useMemo(() => {
     let best: { id: string; ms: number } | null = null;
-    let bestKind: "tcp" | "server" | "dns" = "dns";
-    const rank = { tcp: 2, server: 1, dns: 0 } as const;
+    let bestKind: "tcp" | "dns" = "dns";
+    const rank = { tcp: 2, dns: 1 } as const;
     for (const m of services) {
       const b = bestOfResults(m.ips.map((ip) => sweepResults[ip]));
       if (!b) continue;
@@ -1183,6 +1214,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     dir,
     sweeping,
     sweepResults,
+    intercept,
+    reportIntercept,
     history,
     fullTest,
     services,
