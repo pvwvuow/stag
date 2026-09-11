@@ -23,9 +23,16 @@ const MAX_PROBE_PORTS = PING_TUNING.maxProbePorts;
  *     (client passes `ports` from its preset; 443 is always appended).
  *     Up to 3 resolved IPs x ports race in parallel — the fastest successful
  *     handshake wins, so CDN round-robin can't produce a pessimistic number.
- *  3. Fallback chain: game TCP RTT -> DNS query time (still informative).
+ *  3. NEW (Iran fix) — TCP-handshake the DNS SERVER ITSELF on port 53. From
+ *     Iran without VPN, sanctioned game servers are routinely unreachable,
+ *     which used to leave the live monitor with NO number at all. A handshake
+ *     to the resolver is a REAL network RTT to the thing STAG optimises, works
+ *     for Iranian resolvers without any VPN, and fills the gap honestly
+ *     (labelled "پینگ سرور DNS", never passed off as game RTT).
+ *  4. Fallback chain: game TCP RTT -> DNS-server TCP:53 RTT -> DNS query time.
  * `server: "system"` uses the OS resolver (after STAG applies a DNS, live
- * monitoring shows the real experience through it).
+ * monitoring shows the real experience through it); the server probe then
+ * targets the first current system server.
  * `privateIp` flags DNS answers pointing into private ranges (routing IP or
  * possible hijack — displayed as a neutral note, not a failure).
  */
@@ -181,6 +188,15 @@ export async function POST(req: NextRequest) {
 
     // Realistic game RTT: race TCP handshakes across several resolved IPs and
     // the game's real ports; the fastest success is the honest number.
+    // In PARALLEL we handshake the DNS server itself on TCP:53 — a real
+    // network RTT to the resolver that stays measurable even when the game
+    // servers are blocked (Iran without VPN). Both start at the same tick so
+    // the live monitor's 2s cadence never doubles in wall time.
+    const probeTarget = !useSystem ? rawServer : (systemServers[0] ?? null);
+    const serverProbe: Promise<{ ok: boolean; latencyMs: number | null }> = probeTarget
+      ? tcpTest(probeTarget, 53, Math.min(tcpTimeout, 3000))
+      : Promise.resolve({ ok: false, latencyMs: null });
+
     let tcpMs: number | null = null;
     let tcpOk: boolean | null = null;
     let viaPort: number | null = null;
@@ -190,7 +206,10 @@ export async function POST(req: NextRequest) {
       for (const ip of resolved.slice(0, MAX_PROBE_IPS)) {
         for (const port of probePorts) targets.push({ ip, port });
       }
-      const results = await Promise.all(targets.map((t) => tcpTest(t.ip, t.port, tcpTimeout)));
+      const [results] = await Promise.all([
+        Promise.all(targets.map((t) => tcpTest(t.ip, t.port, tcpTimeout))),
+        serverProbe,
+      ]);
       let best: { ms: number; port: number; ip: string } | null = null;
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
@@ -206,15 +225,23 @@ export async function POST(req: NextRequest) {
       } else {
         tcpOk = false;
       }
+    } else {
+      await serverProbe;
     }
+    const sp = await serverProbe;
+    const serverTcpOk = probeTarget ? sp.ok : null;
+    const serverTcpMs = probeTarget ? sp.latencyMs : null;
+    const serverIp = probeTarget;
 
-    // `ms` is the number STAG surfaces as the headline latency. When a real
-    // game-server TCP handshake succeeded it IS the game RTT; otherwise we fall
-    // back to the DNS query time — which is a DIFFERENT, much smaller metric.
-    // `msKind` tells the client exactly which one it is so the UI never passes
-    // a DNS lookup off as a game ping ("داده غلط").
-    const ms = tcpMs ?? dnsMs;
-    const msKind: "tcp" | "dns" = tcpMs !== null ? "tcp" : "dns";
+    // `ms` is the number STAG surfaces as the headline latency, with a strict
+    // honesty chain: real game-server TCP RTT ("tcp") -> DNS-server TCP:53
+    // RTT ("server") -> DNS query time ("dns"). `msKind` tells the client
+    // exactly which one it is so the UI never passes a DNS lookup off as a
+    // game ping ("داده غلط") — and so a sanctioned-game TCP block from Iran
+    // still leaves the user a real, labelled number instead of a blank.
+    const ms = tcpMs ?? serverTcpMs ?? dnsMs;
+    const msKind: "tcp" | "server" | "dns" =
+      tcpMs !== null ? "tcp" : serverTcpMs !== null ? "server" : "dns";
     return NextResponse.json({
       ok: true,
       ms,
@@ -222,6 +249,9 @@ export async function POST(req: NextRequest) {
       dnsMs,
       tcpMs,
       tcpOk,
+      serverTcpMs,
+      serverTcpOk,
+      serverIp,
       viaPort,
       viaIp,
       privateIp,
@@ -238,6 +268,9 @@ export async function POST(req: NextRequest) {
       dnsMs: null,
       tcpMs: null,
       tcpOk: null,
+      serverTcpMs: null,
+      serverTcpOk: null,
+      serverIp: null,
       viaPort: null,
       viaIp: null,
       privateIp: false,

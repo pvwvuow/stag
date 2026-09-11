@@ -144,6 +144,14 @@ function IpPill({ ip, r }: { ip: string; r?: SweepResult }) {
               زمان DNS
             </span>
           )}
+          {r.msKind === "server" && (
+            <span
+              className="text-[8px] font-medium text-cyan-600 dark:text-cyan-400"
+              title="سرور بازی از این مسیر در دسترس نیست — این عدد پینگ واقعی شبکه تا سرور DNS است (دست‌دادن TCP:53)"
+            >
+              پینگ سرور DNS
+            </span>
+          )}
           {r.tcpOk === false && (
             <span className="text-[8px] font-medium text-amber-600 dark:text-amber-400">
               ۴۴۳ بسته
@@ -279,7 +287,7 @@ function SystemDnsCard() {
         </div>
       ) : !s.supported ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          تشخیص و تغییر DNS سیستم فقط روی ویندوز فعال است؛ در محیط فعلی فقط تست‌ها کار می‌کنند.
+          تشخیص و تغییر DNS سیستم در این محیط ({s.platform ?? "نامشخص"}) فعال نیست؛ در محیط فعلی فقط تست‌ها کار می‌کنند.
         </p>
       ) : (
         <>
@@ -458,27 +466,28 @@ export function Dashboard() {
   }, [live]);
 
   const liveStats = useMemo(() => {
-    /* A probe counts as a "delivered packet to the game server" only when we
-       actually reached it. If TCP monitoring produced a verdict, that verdict
-       (tcpOk) is the source of truth — a DNS answer alone does NOT mean the
-       game server is reachable, so it must not be counted as a healthy packet.
-       When no TCP verdict exists (TCP off / DNS-time fallback) we fall back to
-       the request-level ok flag. */
-    const reachable = (s: LiveSample) =>
-      s.tcpOk === true ? true : s.tcpOk === false ? false : s.ok;
-    const delivered = samples.filter((s) => reachable(s) && s.ms !== null);
-    /* Latency stats use ONLY real game-server RTTs when any exist, so a stray
-       DNS-time fallback never pollutes the average/jitter. If every sample is a
-       DNS-time fallback we still show it (clearly labelled elsewhere). */
+    /* beta.3 — a probe "delivered" whenever it produced a real number: game
+       TCP RTT (best), DNS-server TCP:53 RTT (works from Iran without VPN),
+       or DNS query time. A true failure = the DNS did not answer at all.
+       The stats use the most REAL kind available so the headline number is
+       honest and the monitor never goes blank just because sanctioned game
+       servers are unreachable without a VPN. */
+    const delivered = samples.filter((s) => s.ok && s.ms !== null);
     const tcpVals = delivered.filter((s) => s.msKind === "tcp").map((s) => s.ms as number);
+    const serverVals = delivered.filter((s) => s.msKind === "server").map((s) => s.ms as number);
     const anyVals = delivered.map((s) => s.ms as number);
-    const vals = tcpVals.length ? tcpVals : anyVals;
-    const kind: "tcp" | "dns" | "mixed" =
-      tcpVals.length && tcpVals.length === anyVals.length
-        ? "tcp"
-        : tcpVals.length
-          ? "mixed"
-          : "dns";
+    const vals = tcpVals.length ? tcpVals : serverVals.length ? serverVals : anyVals;
+    /* which kind the headline stats represent right now */
+    const kind: "tcp" | "server" | "dns" | "mixed" =
+      delivered.length === 0
+        ? "dns"
+        : tcpVals.length === delivered.length
+          ? "tcp"
+          : serverVals.length === delivered.length
+            ? "server"
+            : serverVals.length === 0 && tcpVals.length === 0
+              ? "dns"
+              : "mixed";
     const cur = vals.length ? vals[vals.length - 1] : null;
     const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
     const min = vals.length ? Math.min(...vals) : null;
@@ -492,7 +501,9 @@ export function Dashboard() {
     const loss = samples.length
       ? Math.round(((samples.length - delivered.length) / samples.length) * 100)
       : null;
-    return { cur, avg, min, max, jitter, loss, kind, total: samples.length };
+    const tcpFailed = delivered.some((s) => s.tcpOk === false) ||
+      (samples.length > 0 && samples.every((s) => s.tcpOk === false));
+    return { cur, avg, min, max, jitter, loss, kind, total: samples.length, tcpFailed };
   }, [samples]);
 
   const busy = st.dnsAction !== null;
@@ -824,18 +835,32 @@ export function Dashboard() {
                 </div>
                 <LiveChart samples={samples} />
                 <p className="mt-1.5 text-center text-[9px] text-muted-foreground">
-                  هر ۲ ثانیه یک دست‌دادن TCP به سرور بازی{" "}
-                  {game?.tcpPorts.length ? (
+                  {liveStats.kind === "tcp"
+                    ? "هر ۲ ثانیه یک دست‌دادن TCP به سرور بازی "
+                    : liveStats.kind === "server"
+                      ? "هر ۲ ثانیه یک دست‌دادن TCP به سرور DNS "
+                      : "هر ۲ ثانیه یک کوئری DNS "}
+                  {game?.tcpPorts.length && liveStats.kind === "tcp" ? (
                     <span className="ltr">
                       (پورت {game.tcpPorts.join("/")}، ۴۴۳)
                     </span>
                   ) : null}{" "}
-                  — این تأخیرِ رسیدن به سرور است، نه پینگ داخل گیم (UDP){" "}
+                  — {liveStats.kind === "server"
+                    ? "این پینگ واقعی شبکه تا سرور DNS است، نه پینگ داخل گیم (UDP)"
+                    : liveStats.kind === "dns"
+                      ? "این زمان پاسخ DNS است، نه پینگ داخل گیم (UDP)"
+                      : "این تأخیرِ رسیدن به سرور است، نه پینگ داخل گیم (UDP)"}{" "}
                   {pingQuality(liveStats.avg).label !== "—"
                     ? `· کیفیت: ${pingQuality(liveStats.avg).label}`
                     : "· در انتظار داده"}
                 </p>
-                {liveStats.total > 0 && liveStats.kind !== "tcp" && (
+                {liveStats.kind === "server" && (
+                  <p className="mt-1 flex items-start justify-center gap-1 text-center text-[9px] leading-relaxed text-cyan-600 dark:text-cyan-400">
+                    <Info className="mt-0.5 h-3 w-3 shrink-0" />
+                    سرور بازی از این مسیر در دسترس نیست (تحریم/فیلترینگ — رایج در ایران بدون VPN). عدد بالا پینگ واقعی تا سرور DNS است؛ برای پینگ واقعی بازی، VPN را روشن کن.
+                  </p>
+                )}
+                {liveStats.total > 0 && liveStats.kind !== "tcp" && liveStats.kind !== "server" && (
                   <p className="mt-1 flex items-center justify-center gap-1 text-center text-[9px] text-amber-600 dark:text-amber-400">
                     <Info className="h-3 w-3 shrink-0" />
                     {liveStats.kind === "dns"

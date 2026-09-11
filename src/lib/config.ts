@@ -38,13 +38,26 @@ export const PING_TUNING = {
  * Reference resolvers the user's DNS answers are compared against (2.1).
  * In Iran, 8.8.8.8 / 1.1.1.1 over plain UDP are frequently poisoned, so the
  * encrypted DoH endpoints are the PRIMARY baseline; UDP is only the fallback.
+ *
+ * Iran fix (beta.3): the UDP fallback used to be 8.8.8.8 + 1.1.1.1, but
+ * 1.1.1.1 is widely blackholed by Iranian ISPs, so a user without a VPN often
+ * ended up with a single-server baseline (or none). Level3's 4.2.2.4 answers
+ * from Iran without a VPN and is independent of Google — it is now the
+ * secondary, with 1.1.1.1 kept as a third (VPN-friendly) opinion.
  */
 export const BASELINE_DOH_ENDPOINTS = [
   "https://dns.google/resolve",
   "https://cloudflare-dns.com/dns-query",
 ] as const;
 export const BASELINE_UDP_PRIMARY = "8.8.8.8";
-export const BASELINE_UDP_SECONDARY = "1.1.1.1";
+export const BASELINE_UDP_SECONDARY = "4.2.2.4";
+export const BASELINE_UDP_TERTIARY = "1.1.1.1";
+/** Union of all UDP baselines tried when every DoH endpoint is unreachable. */
+export const BASELINE_UDP_FALLBACKS = [
+  BASELINE_UDP_PRIMARY,
+  BASELINE_UDP_SECONDARY,
+  BASELINE_UDP_TERTIARY,
+] as const;
 
 /** Clamp a client-provided number into [min,max], falling back to `dflt`. */
 export function clamp(n: unknown, min: number, max: number, dflt: number): number {

@@ -66,15 +66,21 @@ export interface ApiResult {
   };
 }
 
-/** Per-IP ping result — `ms` is the game-realistic RTT (TCP handshake, fallback: DNS query). */
+/** Per-IP ping result — `ms` follows the honest chain: game TCP RTT ->
+ * DNS-server TCP:53 RTT ("server") -> DNS query time. `msKind` says which. */
 export interface SweepResult {
   ok: boolean;
   ms: number | null;
-  /** which metric `ms` actually is: real game-server TCP RTT, or DNS query time */
-  msKind?: "tcp" | "dns" | null;
+  /** which metric `ms` actually is: real game-server TCP RTT, DNS-server
+   *  TCP:53 RTT, or DNS query time */
+  msKind?: "tcp" | "server" | "dns" | null;
   dnsMs: number | null;
   tcpMs: number | null;
   tcpOk: boolean | null;
+  /** TCP:53 handshake to the DNS server itself (Iran fix — measurable even
+   *  when the game servers are blocked) */
+  serverTcpMs?: number | null;
+  serverTcpOk?: boolean | null;
   /** game port that produced the RTT (null => DNS-time fallback) */
   viaPort?: number | null;
   /** DNS answered with a private-range IP (internal routing / possible hijack) */
@@ -111,6 +117,8 @@ export interface SystemDnsState {
   interfaces: SysInterface[];
   primary: SysInterface | null;
   on: boolean;
+  /** platform string reported by the core ("win32" | "linux" | "darwin" | …) */
+  platform: string | null;
 }
 
 interface FullTestState {
@@ -156,20 +164,23 @@ export const MAX_SERVICES = 12;
 
 /**
  * Pick the best (lowest) latency for a service across its IPs, but PREFER
- * results that are real game-server TCP round-trips over DNS-time fallbacks.
- * A blocked game port that only yields a tiny DNS-query time must never beat a
- * service that actually reached the game server — that was the core reason
- * STAG could crown the "wrong" best DNS.
+ * results by how REAL they are: game-server TCP RTT first, then the
+ * DNS-server TCP:53 RTT (beta.3 Iran fix — a genuine network RTT to the
+ * resolver), then the bare DNS query time. A blocked game port must never
+ * hide a service that answers fast, and a tiny DNS-time must never beat a
+ * service that actually reached the game server.
  */
 function bestOfResults(
   results: Array<SweepResult | undefined>,
-): { ms: number; kind: "tcp" | "dns" } | null {
+): { ms: number; kind: "tcp" | "server" | "dns" } | null {
   const ok = results.filter(
     (r): r is SweepResult & { ok: true; ms: number } => !!r?.ok && typeof r.ms === "number",
   );
   if (ok.length === 0) return null;
   const tcp = ok.filter((r) => r.msKind === "tcp").map((r) => r.ms);
   if (tcp.length > 0) return { ms: Math.min(...tcp), kind: "tcp" };
+  const server = ok.filter((r) => r.msKind === "server").map((r) => r.ms);
+  if (server.length > 0) return { ms: Math.min(...server), kind: "server" };
   return { ms: Math.min(...ok.map((r) => r.ms)), kind: "dns" };
 }
 
@@ -314,6 +325,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     interfaces: [],
     primary: null,
     on: false,
+    platform: null,
   });
   const [dnsAction, setDnsAction] = useState<null | "apply" | "off" | "flush">(null);
   /** فاز ۸ — health-check kill-switch: current DNS stopped answering. */
@@ -480,17 +492,18 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
     const finish = () => {
       let best: { id: string; ms: number } | null = null;
-      let bestKind: "tcp" | "dns" = "dns";
+      let bestKind: "tcp" | "server" | "dns" = "dns";
+      const kindRank = { tcp: 2, server: 1, dns: 0 } as const;
       const okMsAll: number[] = [];
       for (const m of metas) {
         const b = bestOfResults(m.ips.map((ip) => collected[ip]));
         if (!b) continue;
         okMsAll.push(b.ms);
-        // Prefer a real game-server RTT over a DNS-time result; within the same
-        // kind, prefer the lower latency.
+        // Prefer a more REAL measurement (game TCP > DNS-server TCP > DNS
+        // query time); within the same kind, prefer the lower latency.
         const better =
           !best ||
-          (b.kind === "tcp" && bestKind === "dns") ||
+          kindRank[b.kind] > kindRank[bestKind] ||
           (b.kind === bestKind && b.ms < best.ms);
         if (better) {
           best = { id: m.id, ms: b.ms };
@@ -533,10 +546,12 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           (d: {
             ok?: boolean;
             ms?: number | null;
-            msKind?: "tcp" | "dns" | null;
+            msKind?: "tcp" | "server" | "dns" | null;
             dnsMs?: number | null;
             tcpMs?: number | null;
             tcpOk?: boolean | null;
+            serverTcpMs?: number | null;
+            serverTcpOk?: boolean | null;
             viaPort?: number | null;
             privateIp?: boolean;
           }) =>
@@ -547,6 +562,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
               dnsMs: d.dnsMs ?? null,
               tcpMs: d.tcpMs ?? null,
               tcpOk: d.tcpOk ?? null,
+              serverTcpMs: d.serverTcpMs ?? null,
+              serverTcpOk: d.serverTcpOk ?? null,
               viaPort: d.viaPort ?? null,
               privateIp: !!d.privateIp,
             }),
@@ -560,6 +577,8 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
             dnsMs: null,
             tcpMs: null,
             tcpOk: null,
+            serverTcpMs: null,
+            serverTcpOk: null,
             viaPort: null,
             privateIp: false,
           });
@@ -640,14 +659,15 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
 
   const bestService = useMemo(() => {
     let best: { id: string; ms: number } | null = null;
-    let bestKind: "tcp" | "dns" = "dns";
+    let bestKind: "tcp" | "server" | "dns" = "dns";
+    const rank = { tcp: 2, server: 1, dns: 0 } as const;
     for (const m of services) {
       const b = bestOfResults(m.ips.map((ip) => sweepResults[ip]));
       if (!b) continue;
       const better =
         !best ||
-        (b.kind === "tcp" && bestKind === "dns") ||
-        (b.kind === bestKind && b.ms < best.ms);
+        rank[b.kind] > rank[bestKind] ||
+        (b.kind === bestKind && b.ms < best!.ms);
       if (better) {
         best = { id: m.id, ms: b.ms };
         bestKind = b.kind;
@@ -664,15 +684,29 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       const d = (await r.json()) as {
         ok?: boolean;
         supported?: boolean;
+        platform?: string;
         error?: string;
         interfaces?: SysInterface[];
         primary?: SysInterface | null;
       };
       if (!d.ok) {
-        setDnsSys((s) => ({ ...s, loaded: true, error: d.error ?? "خطا در تشخیص وضعیت" }));
+        setDnsSys((s) => ({
+          ...s,
+          loaded: true,
+          error: d.error ?? "خطا در تشخیص وضعیت",
+          platform: d.platform ?? s.platform,
+        }));
         return;
       }
-      if (!d.supported) {
+      /*
+       * beta.3 hardening — the server may only claim unsupported:true on a
+       * non-Windows platform. If the payload itself says win32, a supported
+       * false is a server-side bug: trust the platform and keep the power
+       * button usable instead of dead-ending on "پشتیبانی نمی‌شود".
+       */
+      const platform = d.platform ?? null;
+      const supported = d.supported === false ? platform === "win32" : true;
+      if (!supported) {
         setDnsSys({
           loaded: true,
           supported: false,
@@ -680,6 +714,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           interfaces: [],
           primary: null,
           on: false,
+          platform,
         });
         return;
       }
@@ -691,6 +726,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         interfaces: d.interfaces ?? [],
         primary,
         on: (primary?.servers?.length ?? 0) > 0,
+        platform,
       });
     } catch {
       setDnsSys((s) => ({ ...s, loaded: true, error: "ارتباط با هسته برقرار نشد" }));
@@ -763,7 +799,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       if (!dnsSys.supported) {
         toast({
           title: "پشتیبانی نمی‌شود",
-          description: "تغییر DNS سیستم فقط روی ویندوز فعال است.",
+          description: `تغییر DNS سیستم در این محیط (${dnsSys.platform ?? "نامشخص"}) فعال نیست. اگر روی ویندوز هستی، از بخش درباره لاگ را کپی کن و بفرست.`,
           variant: "destructive",
         });
         return;
@@ -830,7 +866,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     if (!dnsSys.supported) {
       toast({
         title: "پشتیبانی نمی‌شود",
-        description: "تغییر DNS سیستم فقط روی ویندوز فعال است.",
+        description: `تغییر DNS سیستم در این محیط (${dnsSys.platform ?? "نامشخص"}) فعال نیست. اگر روی ویندوز هستی، از بخش درباره لاگ را کپی کن و بفرست.`,
         variant: "destructive",
       });
       return;

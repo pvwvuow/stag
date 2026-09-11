@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resolver } from "node:dns/promises";
 import net from "node:net";
-import { DNS_TUNING, BASELINE_DOH_ENDPOINTS, BASELINE_UDP_PRIMARY, BASELINE_UDP_SECONDARY, clamp } from "@/lib/config";
+import { DNS_TUNING, BASELINE_DOH_ENDPOINTS, BASELINE_UDP_FALLBACKS, BASELINE_UDP_PRIMARY, clamp } from "@/lib/config";
 import { localGuard } from "@/lib/guard";
 
 export const runtime = "nodejs";
@@ -20,9 +20,12 @@ const MAX_TCP_PORTS = DNS_TUNING.maxTcpPorts;
 const DNS_CONCURRENCY = DNS_TUNING.concurrency; // parallel domain queries through the user's DNS (2.4)
 const BASELINE_TTL_MS = DNS_TUNING.baselineTtlMs;
 
-// Public UDP baselines used as a fallback when DoH is unavailable.
+// Public UDP baselines used as a fallback when DoH is unavailable — now THREE
+// independent resolvers (Iran fix: 1.1.1.1 alone is often blackholed in Iran;
+// 4.2.2.4 answers from Iranian ISPs without a VPN).
+const BASELINE_UDP_LIST = [...BASELINE_UDP_FALLBACKS];
+// First entry is also the label used in the API response.
 const BASELINE_DNS = BASELINE_UDP_PRIMARY;
-const BASELINE_DNS_2 = BASELINE_UDP_SECONDARY;
 // Encrypted DoH baselines (2.1) — far harder to tamper with inside Iran than
 // plain UDP, so they are the PRIMARY source of truth; UDP is only the fallback.
 const DOH_ENDPOINTS = [...BASELINE_DOH_ENDPOINTS];
@@ -303,12 +306,13 @@ async function getBaseline(domain: string, queryTimeout: number): Promise<Baseli
   if (dohIps.length > 0) {
     entry = { ips: dohIps, source: "doh", at: Date.now() };
   } else {
-    // Fallback: two independent public UDP resolvers, unioned.
-    const [a, b] = await Promise.all([
-      resolveVia(BASELINE_DNS, domain, queryTimeout),
-      resolveVia(BASELINE_DNS_2, domain, queryTimeout),
-    ]);
-    const udpIps = Array.from(new Set([...a.ips, ...b.ips]));
+    // Fallback: several independent public UDP resolvers, unioned — with a
+    // third opinion the baseline survives one blackholed server (common for
+    // 1.1.1.1 inside Iran).
+    const udp = await Promise.all(
+      BASELINE_UDP_LIST.map((s) => resolveVia(s, domain, queryTimeout)),
+    );
+    const udpIps = Array.from(new Set(udp.flatMap((r) => r.ips)));
     entry = { ips: udpIps, source: udpIps.length ? "udp" : "none", at: Date.now() };
   }
   baselineCache.set(domain, entry);

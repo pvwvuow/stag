@@ -49,6 +49,7 @@ let closeToTray = false;
 
 function bootstrap() {
   initLogger();
+  logElevationState();
   registerIpc();
 
   // The updater is an optional feature — a failure here (missing module,
@@ -141,6 +142,37 @@ function logLine(level, msg) {
   }
   if (level === "error") console.error(line);
   else console.log(line);
+}
+
+/**
+ * beta.3 — log whether STAG runs with admin rights (Windows). System-DNS
+ * changes need elevation; this line in the support log instantly separates
+ * "app not elevated" from "UAC/PowerShell broken" when the power button is
+ * reported broken. Best-effort, cached, never blocks boot.
+ */
+let elevationLogged = false;
+function logElevationState() {
+  if (elevationLogged) return;
+  elevationLogged = true;
+  if (process.platform !== "win32") {
+    logLine("info", `platform=${process.platform} (elevation check is Windows-only)`);
+    return;
+  }
+  try {
+    const probe = spawn("net.exe", ["session"], { windowsHide: true, stdio: "ignore" });
+    const t = setTimeout(() => {
+      try { probe.kill(); } catch { /* noop */ }
+    }, 5000);
+    t.unref?.();
+    probe.once("exit", (code) => {
+      logLine("info", `windows elevation: ${code === 0 ? "ADMIN (elevated)" : "standard user (not elevated)"} — system-DNS apply uses direct netsh first, UAC on demand`);
+    });
+    probe.once("error", () => {
+      logLine("info", "windows elevation: probe failed (assuming standard user)");
+    });
+  } catch (err) {
+    logLine("info", `windows elevation: probe error ${err?.message}`);
+  }
 }
 
 // 5.1 — a stray async error must not produce the scary red Electron dialog.

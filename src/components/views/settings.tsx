@@ -384,12 +384,22 @@ function Troubleshooter() {
     setHttpsPath("running");
 
     // 1) plain UDP DNS query to a public resolver -> port 53 open?
+    //    Iran fix: 8.8.8.8 is blocked by a few Iranian ISPs — retry with
+    //    4.2.2.4 (Level3, reachable from Iran) before declaring failure.
     try {
       const d = (await apiFetch("/api/ping", {
         method: "POST",
         body: JSON.stringify({ server: "8.8.8.8", tcp: false, queryTimeoutMs: 3000 }),
       }).then((r) => r.json())) as { ok?: boolean };
-      setDnsPort(d?.ok ? "pass" : "fail");
+      if (d?.ok) {
+        setDnsPort("pass");
+      } else {
+        const d2 = (await apiFetch("/api/ping", {
+          method: "POST",
+          body: JSON.stringify({ server: "4.2.2.4", tcp: false, queryTimeoutMs: 3000 }),
+        }).then((r) => r.json())) as { ok?: boolean };
+        setDnsPort(d2?.ok ? "pass" : "fail");
+      }
     } catch {
       setDnsPort("fail");
     }
@@ -410,12 +420,20 @@ function Troubleshooter() {
     }
 
     // 3) HTTPS (443) reachable through the current path?
+    //    Iran fix: probe a site that answers from Iran WITHOUT a VPN — TCP:443
+    //    to Google used to fail for every Iranian user without a VPN and
+    //    painted a healthy path red.
     try {
       const d = (await apiFetch("/api/ping", {
         method: "POST",
-        body: JSON.stringify({ server: "system", tcp: true, systemServers: st.dnsSys.primary?.servers ?? [] }),
+        body: JSON.stringify({
+          server: "system",
+          tcp: true,
+          domain: "www.digikala.com",
+          systemServers: st.dnsSys.primary?.servers ?? [],
+        }),
       }).then((r) => r.json())) as { tcpOk?: boolean | null; ok?: boolean };
-      setHttpsPath(d?.tcpOk === true || d?.ok ? "pass" : "fail");
+      setHttpsPath(d?.tcpOk === true ? "pass" : "fail");
     } catch {
       setHttpsPath("fail");
     }
@@ -446,8 +464,8 @@ function Troubleshooter() {
     {
       s: httpsPath,
       title: "پورت ۴۴۳ (HTTPS) در دسترس است؟",
-      hint: "دست‌دادن TCP به وب — مسیر لازم برای اکثر بازی‌ها",
-      failHint: "پورت ۴۴۳ مسدود است — خیلی از سرویس‌های بازی بالا نمی‌آیند (فایروال یا پروکسی را چک کن).",
+      hint: "دست‌دادن TCP به یک سایت همیشه‌در‌دسترس از ایران (دیجی‌کالا)",
+      failHint: "پورت ۴۴۳ از مسیر فعلی بسته است — فایروال/پروکسی را چک کن؛ خیلی از سرویس‌های بازی بدون ۴۴۳ بالا نمی‌آیند.",
     },
   ];
 
@@ -491,7 +509,7 @@ function Troubleshooter() {
             <span className="block text-[11px] text-muted-foreground">
               {st.dnsSys.supported
                 ? "ویندوز — با تأیید پنجره UAC، مستقیم از داخل STAG"
-                : "فقط ویندوز پشتیبانی می‌شود؛ تست پینگ روی هر سیستم‌عاملی کار می‌کند."}
+                : `در این محیط (${st.dnsSys.platform ?? "نامشخص"}) پشتیبانی نمی‌شود؛ تست پینگ روی هر سیستم‌عاملی کار می‌کند.`}
             </span>
           </span>
         </li>

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { localGuard } from "@/lib/guard";
+import { isWindowsRuntime, runtimePlatform } from "@/lib/platform";
 import {
   buildScript,
   sanitizeAlias,
@@ -103,6 +104,29 @@ async function ps(command: string, timeout = 30000): Promise<string> {
   return r.stdout.trim();
 }
 
+/**
+ * Run a .ps1 script file DIRECTLY (no elevation). When STAG itself runs
+ * elevated (Run-as-administrator, or an admin shell), netsh inside succeeds —
+ * no UAC prompt, no Start-Process round-trip. When STAG is NOT elevated the
+ * script still runs and reports "requires elevation" in its result file, which
+ * the caller turns into the UAC path. This direct-first order is the fix for
+ * "دکمه روشن/خاموش کار نمی‌کند": one fragile launch path (Start-Process -Verb
+ * RunAs) is no longer the ONLY way the action can ever succeed.
+ */
+async function runScriptDirect(scriptFile: string, timeout = 60000): Promise<void> {
+  await execPowershell(
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptFile],
+    timeout,
+  );
+}
+
+/** True when a netsh/PowerShell error text means "needs admin rights". */
+function needsElevation(msg: string): boolean {
+  return /elevation|elevated|access is denied|access denied|administrator|RunAs|انکار شد/i.test(
+    msg ?? "",
+  );
+}
+
 /** Ordered adapter aliases: default-route adapters first, then the rest. */
 async function listAdapters(): Promise<string[]> {
   const out = await ps(`
@@ -184,8 +208,12 @@ export async function GET(req: NextRequest) {
   const denied = localGuard(req);
   if (denied) return denied;
 
-  if (process.platform !== "win32") {
-    return NextResponse.json({ ok: true, supported: false, platform: process.platform });
+  /* beta.3: MUST be a runtime check — the old `process.platform !== "win32"`
+   * was constant-folded by Turbopack to the BUILD platform (Linux), so the
+   * packaged Windows app always answered supported:false and the power button
+   * died on "پشتیبانی نمی‌شود". isWindowsRuntime() defeats the fold. */
+  if (!isWindowsRuntime()) {
+    return NextResponse.json({ ok: true, supported: false, platform: runtimePlatform() });
   }
   try {
     const { interfaces, primary } = await detect();
@@ -215,7 +243,8 @@ export async function POST(req: NextRequest) {
   const denied = localGuard(req);
   if (denied) return denied;
 
-  if (process.platform !== "win32") {
+  // beta.3: runtime platform check (see the GET comment — Turbopack fold).
+  if (!isWindowsRuntime()) {
     return NextResponse.json(
       { ok: false, error: "تغییر DNS سیستم فقط روی ویندوز پشتیبانی می‌شود." },
       { status: 400 },
@@ -293,46 +322,84 @@ export async function POST(req: NextRequest) {
   const resultFile = path.join(os.tmpdir(), `stag-dns-out-${token}.txt`);
   fs.writeFileSync(scriptFile, buildScript(action, alias, ips, resultFile, restore), "utf8");
 
-  try {
-    // Elevate: one UAC prompt, hidden window, wait for the script to finish.
-    const elevate =
-      `Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden ` +
-      `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${scriptFile}'`;
+  const readResult = (): string => {
     try {
-      await ps(elevate, 120000);
+      return fs.readFileSync(resultFile, "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+
+  try {
+    /*
+     * Two-stage execution (beta.3 fix for the power button):
+     *  1. DIRECT — works instantly whenever STAG runs with admin rights and
+     *     produces the REAL netsh error text when it does not.
+     *  2. ELEVATED (Start-Process -Verb RunAs → one UAC prompt) — only when
+     *     stage 1 proves elevation is the missing piece. A UAC prompt that the
+     *     user cancels is reported as such instead of a generic failure.
+     */
+    let directErr = "";
+    let result = "";
+    try {
+      await runScriptDirect(scriptFile);
     } catch (err) {
-      const msg = String((err as Error).message ?? "");
-      if (/canceled|cancelled|denied|dismissed/i.test(msg)) {
+      directErr = String((err as Error).message ?? "");
+    }
+    result = readResult();
+
+    const directBlocked =
+      !result || needsElevation(result.replace(/^ERR\s*/, "")) || needsElevation(directErr);
+
+    if (directBlocked) {
+      // Stage 2 — one UAC prompt, hidden window, wait for the script to finish.
+      const elevate =
+        `Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden ` +
+        `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${scriptFile}'`;
+      try {
+        await ps(elevate, 120000);
+      } catch (err) {
+        const msg = String((err as Error).message ?? "");
+        if (/canceled|cancelled|denied|dismissed/i.test(msg)) {
+          return NextResponse.json({
+            ok: false,
+            code: "uac",
+            error:
+              "درخواست دسترسی مدیر (UAC) تأیید نشد — بدون اجازه مدیر نمی‌شود DNS سیستم را عوض کرد.",
+          });
+        }
         return NextResponse.json({
           ok: false,
-          code: "uac",
-          error: "درخواست دسترسی مدیر (UAC) تأیید نشد — بدون اجازه مدیر نمی‌شود DNS سیستم را عوض کرد.",
+          code: "elevation",
+          error:
+            `اجرای دستور با دسترسی مدیر ناموفق بود: ${msg.slice(0, 140)}. ` +
+            "یک راه دیگر: STAG را با راست‌کلیک → Run as administrator اجرا کن.",
         });
       }
-      return NextResponse.json({
-        ok: false,
-        error: `اجرای دستور با دسترسی مدیر ناموفق بود: ${msg.slice(0, 160)}`,
-      });
+      // The elevated run writes the result file; poll briefly for it.
+      for (let i = 0; i < 20 && !result; i++) {
+        result = readResult();
+        if (!result) await new Promise((r) => setTimeout(r, 250));
+      }
     }
 
-    let result = "";
-    for (let i = 0; i < 20; i++) {
-      if (fs.existsSync(resultFile)) {
-        result = fs.readFileSync(resultFile, "utf8").trim();
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 250));
-    }
     if (!result) {
       return NextResponse.json({
         ok: false,
-        error: "نتیجه اجرا دریافت نشد (اسکریپت کامل اجرا نشد).",
+        code: "no-result",
+        error:
+          "نتیجه اجرا دریافت نشد (اسکریپت کامل اجرا نشد) — اگر آنتی‌ویروس اسکریپت‌های PowerShell را می‌بندد، آن را برای STAG مستثنا کن.",
       });
     }
     if (!result.startsWith("OK")) {
+      const raw = result.replace(/^ERR\s*/, "");
+      const friendly = needsElevation(raw)
+        ? "دسترسی مدیر لازم است — STAG را با Run as administrator اجرا کن یا پنجره UAC را تأیید کن."
+        : raw;
       return NextResponse.json({
         ok: false,
-        error: result.replace(/^ERR\s*/, "خطا: ").slice(0, 200),
+        code: "netsh",
+        error: `خطا: ${friendly.slice(0, 200)}`,
       });
     }
 

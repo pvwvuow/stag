@@ -8,8 +8,9 @@ export interface LiveSample {
   t: number;
   ok: boolean;
   ms: number | null;
-  /** which metric `ms` is — real game TCP RTT vs. DNS query time */
-  msKind?: "tcp" | "dns" | null;
+  /** which metric `ms` is — real game TCP RTT, DNS-server TCP:53 RTT, or
+   *  DNS query time */
+  msKind?: "tcp" | "server" | "dns" | null;
   /** game-server TCP reachability for this probe (null = TCP not attempted) */
   tcpOk?: boolean | null;
 }
@@ -28,22 +29,24 @@ export function LiveChart({ samples, slots = 45 }: { samples: LiveSample[]; slot
 
   const { bars, maxMs, avgMs } = useMemo(() => {
     const buf = samples.slice(-slots);
-    /* A packet is "delivered" only when the game server was actually reached.
-       tcpOk (when present) is authoritative; otherwise fall back to ok. */
-    const reachable = (s: LiveSample) =>
-      s.tcpOk === true ? true : s.tcpOk === false ? false : s.ok;
-    const okVals = buf.filter((s) => reachable(s) && s.ms !== null).map((s) => s.ms as number);
+    /* A sample is delivered whenever the probe produced a real number (game
+       TCP, DNS-server TCP:53 or DNS query). Only a request-level failure —
+       the DNS did not answer at all — draws as a lost packet. Game-server
+       blocks (Iran sanctions) degrade the KIND of the number, not its
+       existence, so the monitor stays useful without a VPN. */
+    const reachable = (s: LiveSample) => s.ok && s.ms !== null;
+    const okVals = buf.filter(reachable).map((s) => s.ms as number);
     const maxMs = Math.max(60, ...okVals) * 1.15;
     const avgMs = okVals.length ? Math.round(okVals.reduce((a, b) => a + b, 0) / okVals.length) : null;
     const slotW = W / slots;
     const barW = Math.max(3, slotW - 2.5);
     const bars = buf.map((s, i) => {
       const x = W - (buf.length - i) * slotW + (slotW - barW) / 2; // latest at right
-      if (!reachable(s) || s.ms === null) {
+      if (!reachable(s)) {
         return { x, w: barW, lost: true, h: innerH };
       }
-      const h = Math.max(3, (s.ms / maxMs) * innerH);
-      return { x, w: barW, lost: false, h, ms: s.ms };
+      const h = Math.max(3, ((s.ms as number) / maxMs) * innerH);
+      return { x, w: barW, lost: false, h, ms: s.ms as number };
     });
     return { bars, maxMs, avgMs };
   }, [samples, slots]);
