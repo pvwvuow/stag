@@ -1,11 +1,25 @@
 /**
  * Pure verdict logic for the full DNS test (فاز ۱.۱ — فایل مشترک برای تست یونیت).
- * Reachability-aware: a DNS that resolves domains but points them at
- * unreachable (TCP-dead or private) servers is WORSE than one that plainly
- * fails, because it creates a false "connected" impression.
+ *
+ * beta.4 rewrite — «اطلاعات درست» (report what is actually true):
+ *
+ * The old logic treated ANY unreachable critical server as "misleading" (rose,
+ * worst-possible). Inside Iran that verdict was actively WRONG: secondary
+ * publisher endpoints (id.163.com, neteasgames.com, …) are routinely filtered
+ * while the game itself keeps working — the user literally passed loading,
+ * got ping 999 in the lobby (login hop blocked) and a healthy 130ms in-match
+ * with Quad9. Reality for an Iranian gamer is a SPECTRUM, so the verdict now
+ * reports exactly that:
+ *
+ *  ok         all critical servers reachable                 → green  «مناسب بازی»
+ *  partial    SOME reachable (≥1) — filtered-network normal  → amber  «قابل استفاده»
+ *  blocked    0 reachable, DNS answers fine (TCP/ICMP dead)  → amber  «به سرورهای بازی نمی‌رسه»
+ *  misleading 0 reachable AND answers are private/fake IPs   → rose   «مسیر فیک (IP داخلی)»
+ *  dead       the DNS itself never answered                  → rose   «DNS جواب نمیده»
+ *  unknown    nothing could be judged                        → zinc
  */
 
-export type Tone = "ok" | "partial" | "dead" | "misleading" | "unknown";
+export type Tone = "ok" | "partial" | "blocked" | "dead" | "misleading" | "unknown";
 
 export interface VerdictSummary {
   total: number;
@@ -14,17 +28,30 @@ export interface VerdictSummary {
   reachable?: number;
   /** critical domains that resolve but can't reach the game server */
   misleading?: number;
+  /** critical domains whose answers are ALL private/unroutable (fake path) */
+  private?: number;
   skipped?: number;
 }
 
 export const TONE_BADGE: Record<Tone, string> = {
   ok: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40",
   partial: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40",
-  // "misleading" (resolves but game server unreachable) is the WORST case — it
-  // fakes a connection — so it gets the strongest (rose) treatment.
-  misleading: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/50",
+  // "blocked" = DNS works, servers filtered — common, survivable, NOT a scandal.
+  blocked: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40",
   dead: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40",
+  // A fake/private path actively poisons name resolution — rose is deserved.
+  misleading: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/50",
   unknown: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/40",
+};
+
+/** One-line honest hint per tone (shown under results / in tooltips). */
+export const TONE_HINT: Record<Tone, string> = {
+  ok: "همه سرورهای حیاتی بازی در دسترس‌اند — ست‌کردنش امنه.",
+  partial: "بعضی سرورها از ایران محدودند ولی بازی معمولاً کار می‌کند (مثل پینگ ۹۹۹ در لابی و ۱۳۰ داخل مچ).",
+  blocked: "DNS جواب می‌دهد ولی سرورهای حیاتی از این شبکه در دسترس نیستند؛ بازی ممکن است از مسیر دیگری کار کند.",
+  dead: "هیچ پاسخی از این DNS نرسید — آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.",
+  misleading: "این DNS دامنه را به IP داخلی/بی‌جواب می‌فرستد — مسیر فیک؛ استفاده نکن.",
+  unknown: "قضاوت ممکن نشد — تست را دوباره اجرا کن.",
 };
 
 /**
@@ -36,33 +63,40 @@ export function verdictOf(s: VerdictSummary): { tone: Tone; label: string } {
   // Reachability is authoritative when present; otherwise fall back to resolved.
   const reachable = typeof s.reachable === "number" ? s.reachable : s.resolved;
   const misleading = typeof s.misleading === "number" ? s.misleading : 0;
+  const fake = typeof s.private === "number" ? s.private : 0;
 
   let tone: Tone;
   if (s.total === 0) {
     tone = "unknown";
-  } else if (reachable === 0 && misleading > 0) {
-    // Everything that resolved is actually unreachable → a fake "connected".
-    tone = "misleading";
-  } else if (reachable === 0) {
-    tone = "dead";
   } else if (reachable === s.total) {
     tone = "ok";
+  } else if (reachable >= 1) {
+    // Filtered-network normal case: some publisher hops are dead, at least one
+    // real path works. That is genuinely usable — say so, amber not rose.
+    tone = "partial";
+  } else if (fake > 0) {
+    // Zero reachable AND at least one answer pointed at a private/unroutable
+    // IP — an actively fake path, the only verdict that deserves rose here.
+    tone = "misleading";
+  } else if (s.resolved > 0 || misleading > 0) {
+    // DNS answered, but every critical game server is unreachable from here.
+    tone = "blocked";
   } else {
-    // Some critical servers reachable, some not. If the gap is caused by
-    // misleading (resolve-without-reach) domains, flag it explicitly.
-    tone = misleading > 0 ? "misleading" : "partial";
+    tone = "dead";
   }
 
   const label =
     tone === "ok"
-      ? "DNS کار میکنه"
-      : tone === "dead"
-        ? "DNS جواب نمیده"
-        : tone === "misleading"
-          ? "resolve می‌شه ولی به سرور بازی نمی‌رسه"
-          : tone === "partial"
-            ? "ناقص جواب میده"
-            : "قضاوت ممکن نبود";
+      ? "مناسب بازی"
+      : tone === "partial"
+        ? "قابل استفاده — بعضی سرورها محدود"
+        : tone === "blocked"
+          ? "به سرورهای بازی نمی‌رسه"
+          : tone === "misleading"
+            ? "مسیر فیک (IP داخلی)"
+            : tone === "dead"
+              ? "DNS جواب نمیده"
+              : "قضاوت ممکن نبود";
   return { tone, label };
 }
 

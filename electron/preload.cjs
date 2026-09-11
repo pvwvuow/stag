@@ -40,6 +40,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /** Retry the embedded engine from the in-app error page (۵.۱) */
   retryServer: () => ipcRenderer.invoke("app:retry-server"),
 
+  /** beta.4 — Windows elevation state + one-click UAC relaunch */
+  getElevation: () => ipcRenderer.invoke("app:elevation"),
+  relaunchElevated: () => ipcRenderer.invoke("app:relaunch-elevated"),
+
   /** In-app updates (electron-updater, differential blockmap downloads) */
   updater: {
     getState: () => ipcRenderer.invoke("update:get-state"),

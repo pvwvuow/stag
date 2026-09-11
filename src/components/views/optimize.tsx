@@ -26,6 +26,7 @@ import {
   verdictOf,
   type Tone,
 } from "@/components/ui-helpers";
+import { TONE_HINT } from "@/lib/verdict";
 import { DNS_GROUPS } from "@/lib/dns-catalog";
 import { APP_VERSION } from "@/lib/version";
 import { FlagCircle } from "@/components/views/dashboard";
@@ -206,6 +207,9 @@ function IpResultCard({
       {expanded && (
         <div className="bg-background/40">
           <div className="mx-3.5 hairline" />
+          <p className="px-3.5 pt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+            {TONE_HINT[tone as Tone]}
+          </p>
           {res.results.length === 0 ? (
             <p className="p-3 text-xs text-muted-foreground">نتیجه‌ای ثبت نشد — احتمالاً DNS هیچ پاسخی نداد.</p>
           ) : (
@@ -256,14 +260,24 @@ export function Optimize() {
 
   const game = getPreset(st.gameId);
 
+  /*
+   * beta.4 scoring — «اطلاعات درست»: rank by WHAT ACTUALLY MATTERS for
+   * playing, in this order:
+   *  1. fewest unreachable critical servers (unreachable = total - reachable)
+   *  2. fake/private paths are a hard penalty (worse than plain filtering)
+   *  3. fewest resolve-but-dead domains (misleading signals)
+   *  4. fastest average DNS query
+   * The old tone-rank put a 1/2-reachable (but working!) DNS below a dead one
+   * — exactly the "آمار غلط" the user reported while gaming at 130ms.
+   */
   const score = (res: ApiResult) => {
-    const { tone } = verdictOf(res);
-    // Reachable-good first; "misleading" (resolves but game server unreachable)
-    // ranks WORST — even below a clean failure — so a fake "connected" DNS can
-    // never be crowned best.
-    const toneRank =
-      tone === "ok" ? 0 : tone === "partial" ? 1 : tone === "unknown" ? 2 : tone === "dead" ? 3 : 4;
-    return toneRank * 10000 + (res.summary.avgLatency ?? 9999);
+    const s = res.summary;
+    const reachable = typeof s.reachable === "number" ? s.reachable : s.resolved;
+    const unreachable = Math.max(0, s.total - reachable);
+    const fake = s.private ?? 0;
+    return (
+      unreachable * 100000 + fake * 50000 + (s.misleading ?? 0) * 2000 + (s.avgLatency ?? 9999)
+    );
   };
 
   /* group the full-test order by service (name header + paired IPs below) */
@@ -280,13 +294,21 @@ export function Optimize() {
     }));
   })();
 
+  /*
+   * beta.4 — the trophy goes to the best-scoring service that has at least ONE
+   * reachable critical server, even when nothing is 100% green (the normal
+   * case inside Iran). It no longer requires tone==="ok" — hiding the winner
+   * whenever one publisher hop was filtered was part of the wrong-info bug.
+   */
   const winnerIp = useMemo(() => {
     const done = st.fullTest.order
       .map((o) => ({ ip: o.ip, res: st.fullTest.results[o.ip] }))
       .filter((e) => e.res);
     const ranked = done.sort((a, b) => score(a.res!) - score(b.res!));
     const top = ranked[0];
-    return top && verdictOf(top.res!).tone === "ok" ? top.ip : null;
+    if (!top) return null;
+    const s = top.res!.summary;
+    return (typeof s.reachable === "number" ? s.reachable : s.resolved) > 0 ? top.ip : null;
   }, [st.fullTest.order, st.fullTest.results]);
 
   const groupRank = (meta: ServiceMeta | null, ips: string[]) => {
@@ -533,37 +555,38 @@ export function Optimize() {
         <div className="grid gap-px bg-border/40 sm:grid-cols-2">
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="h-3.5 w-3.5" /> DNS کار میکنه
+              <CheckCircle2 className="h-3.5 w-3.5" /> مناسب بازی
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              سرورهای حیاتی بازی (لاگین و سرویس) نه‌فقط resolve شدند بلکه واقعاً قابل‌اتصال بودند؛
+              همه سرورهای حیاتی بازی (لاگین و سرویس) نه‌فقط resolve شدند بلکه واقعاً قابل‌اتصال بودند؛
               ست‌کردنش روی کنسول/PC امنه.
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
-            <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
-              <XCircle className="h-3.5 w-3.5" /> به سرور بازی نمی‌رسه
+            <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+              <CheckCircle2 className="h-3.5 w-3.5" /> قابل استفاده — بعضی سرورها محدود
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              دامنه resolve می‌شه ولی به یک IP داخلی/بی‌جواب می‌رسه — بازی «انگار وصله» ولی بالا
-              نمی‌آید. این از resolve‌نشدن هم بدتره چون توهم اتصال می‌سازه.
+              در ایران عادیه: چند دامنه‌ی ناشر (مثل id.163.com) فیلتره ولی مسیر اصلی بازی بازه.
+              بازی معمولاً کار می‌کنه — مثلاً پینگ ۹۹۹ در لابی ولی ۱۳۰ داخل مچ. علامت قرمز نیست.
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400">
-              <Route className="h-3.5 w-3.5" /> مسیر اختصاصی
+              <Route className="h-3.5 w-3.5" /> به سرورهای بازی نمی‌رسه
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              این DNS آی‌پی متفاوت از DNSهای معمولی میده — در سرویس‌های گیمینگ نشانه‌ی روتینگ اختصاصیه
-              (نه تضمین صددرصدی).
+              DNS جواب می‌ده ولی هیچ سرور حیاتی‌ای از این شبکه در دسترس نبود (تحریم/فیلترینگ).
+              بازی ممکنه از مسیر دیگه‌ای هنوز کار کنه — ملاک نهایی تجربه‌ی خودت داخل بازیه.
             </p>
           </div>
           <div className="bg-card/80 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400">
-              <XCircle className="h-3.5 w-3.5" /> DNS جواب نمیده
+              <XCircle className="h-3.5 w-3.5" /> مسیر فیک (IP داخلی) / DNS جواب نمیده
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
+              «مسیر فیک» یعنی دامنه به IP داخلی/بی‌جواب resolve می‌شه — توهم اتصال؛ استفاده نکن.
+              «جواب نمیده» یعنی هیچ پاسخی نرسید؛ آی‌پی اشتباه، پورت ۵۳ بسته، یا سرویس محدود به IP ایران.
             </p>
           </div>
           <div className="bg-card/80 p-3.5 sm:col-span-2">
@@ -573,7 +596,8 @@ export function Optimize() {
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               قضاوت و رتبه‌بندی فقط بر پایه‌ی دامنه‌های حیاتی (لاگین/سرویس بازی) و قابل‌اتصال‌بودن واقعی
               (نه فقط resolve) محاسبه می‌شه؛ وب‌سایت تبلیغاتی بازی در رتبه اثری نداره. عدد پینگ هم «تأخیر
-              رسیدن به سرور بازی روی TCP/443» است، نه پینگ داخل گیم (UDP). فقط مطمئن شو فایروال پورت ۵۳
+              رسیدن به سرور بازی روی TCP/443» است، نه پینگ داخل گیم (UDP). عددی که خود بازی در لابی/مچ
+              نشون می‌ده سنجش داخلی خودشه و ممکنه با تست STAG فرق کنه. فقط مطمئن شو فایروال پورت ۵۳
               (UDP) را نبسته باشد.
             </p>
           </div>

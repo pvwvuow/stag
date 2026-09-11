@@ -22,6 +22,8 @@ import {
   XCircle,
   Circle,
   Rocket,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { useStag, MAX_SERVICES } from "@/components/stag-store";
 import { Switch } from "@/components/ui/switch";
@@ -189,6 +191,49 @@ export function SettingsView() {
             دانلود دستی از صفحه Releases گیت‌هاب
           </button>
         )}
+
+        {u.status === "ready" && u.delta && (
+          <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-2 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            دانلود اختلافی: فقط {fmtBytes(u.transferred)} از {fmtBytes(u.total)} دانلود شد — نه کل برنامه.
+          </p>
+        )}
+      </section>
+
+      {/* beta.4 — elevation / system-DNS rights */}
+      <section className="panel p-4">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-bold">
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          دسترسی سیستم
+        </h2>
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          تغییر DNS ویندوز به دسترسی مدیر نیاز دارد. اگر STAG با دسترسی مدیر اجرا شود، دکمه روشن/خاموش
+          بدون پنجره UAC و فوری کار می‌کند.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          {st.dnsSys.elevated ? (
+            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              اجرا با دسترسی مدیر — تغییر DNS فوری است
+            </span>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                <ShieldAlert className="h-3.5 w-3.5" />
+                بدون دسترسی مدیر — هر تغییر DNS یک تأیید UAC می‌خواهد
+              </span>
+              {isDesktop && (
+                <button
+                  onClick={() => st.relaunchElevated()}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:bg-primary/90"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  اجرای مجدد به‌عنوان مدیر
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </section>
 
       {/* theme */}

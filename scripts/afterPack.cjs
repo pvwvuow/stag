@@ -58,4 +58,27 @@ exports.default = async function afterPack(context) {
   res.outputResource(pe);
   fs.writeFileSync(exePath, Buffer.from(pe.generate()));
   console.log(`  • afterPack(resedit): icon(group ${groupId}) + version ${v} injected into ${exeName}`);
+
+  // ── beta.4: app-update.yml ────────────────────────────────────────────────
+  // electron-updater reads provider config from resources/app-update.yml, but
+  // electron-builder never wrote one for this project (it was missing from
+  // every packaged build), so in-app updates were DEAD and users had to
+  // download the full installer from GitHub by hand each release. Write it
+  // ourselves, deterministically, after the resources are in place.
+  // updaterCacheDirName must match electron-builder's rule:
+  //   sanitizeFileName(productName).toLowerCase() + "-updater"
+  const resourcesDir = path.join(context.appOutDir, "resources");
+  fs.mkdirSync(resourcesDir, { recursive: true });
+  const updaterCacheDirName = `${appInfo.productName
+    .replace(/[^\w.\-]+/g, "-")
+    .toLowerCase()}-updater`;
+  const appUpdateYml = [
+    "provider: github",
+    "owner: pvwvuow",
+    "repo: stag",
+    `updaterCacheDirName: ${updaterCacheDirName}`,
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(resourcesDir, "app-update.yml"), appUpdateYml, "utf8");
+  console.log(`  • afterPack(update-config): app-update.yml written (updaterCacheDirName=${updaterCacheDirName})`);
 };

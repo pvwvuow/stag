@@ -475,6 +475,9 @@ export async function POST(req: NextRequest) {
   const resolvedCount = verdictSet.filter((r) => r.status === "ok").length;
   const reachableCount = verdictSet.filter((r) => r.reachable === true).length;
   const misleadingCount = verdictSet.filter((r) => r.misleading).length;
+  // beta.4 — private/fake answers counted separately so the verdict can tell
+  // "servers filtered" (survivable) apart from "fake IP path" (dangerous).
+  const privateCount = verdictSet.filter((r) => r.privateAnswer).length;
 
   const latencies = results
     .map((r) => r.latencyMs)
@@ -489,6 +492,7 @@ export async function POST(req: NextRequest) {
       resolved: resolvedCount,
       reachable: reachableCount,
       misleading: misleadingCount,
+      private: privateCount,
       skipped: results.length - judgeable.length,
       avgLatency: latencies.length
         ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)

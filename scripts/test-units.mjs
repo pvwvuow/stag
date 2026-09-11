@@ -57,16 +57,28 @@ function check(name, cond) {
 console.log("verdict:");
 {
   const r = verdictOf({ total: 4, resolved: 4, reachable: 4, misleading: 0 });
-  check("all reachable -> ok", r.tone === "ok" && r.label === "DNS کار میکنه");
+  check("all reachable -> ok", r.tone === "ok" && r.label === "مناسب بازی");
 }
 {
   // THE regression: resolves everything but the game server is unreachable
   const r = verdictOf({ total: 4, resolved: 4, reachable: 0, misleading: 4 });
-  check("resolve-without-reach -> misleading (never green)", r.tone === "misleading");
+  check("resolve-without-reach -> blocked (NOT rose 'misleading')", r.tone === "blocked");
 }
 {
   const r = verdictOf({ total: 4, resolved: 3, reachable: 0, misleading: 3 });
-  check("partial-resolve + zero reach -> misleading", r.tone === "misleading");
+  check("partial-resolve + zero reach -> blocked", r.tone === "blocked");
+}
+{
+  // beta.4 — the Quad9 scenario the user reported: SOME critical servers work
+  // (the game does run) even though others are filtered. Must be usable, amber.
+  const r = verdictOf({ total: 2, resolved: 2, reachable: 1, misleading: 1 });
+  check("1/2 reachable -> partial (usable, not rose)", r.tone === "partial");
+  check("partial label mentions usable", /قابل استفاده/.test(r.label));
+}
+{
+  // beta.4 — fake/private answers with zero reach deserve the rose treatment.
+  const r = verdictOf({ total: 4, resolved: 4, reachable: 0, misleading: 4, private: 2 });
+  check("zero reach + private IPs -> misleading (fake path)", r.tone === "misleading");
 }
 {
   const r = verdictOf({ total: 4, resolved: 0, reachable: 0, misleading: 0 });
@@ -77,8 +89,9 @@ console.log("verdict:");
   check("half reachable, none misleading -> partial", r.tone === "partial");
 }
 {
+  // beta.4 — one reachable among many is enough to be called usable
   const r = verdictOf({ total: 4, resolved: 4, reachable: 3, misleading: 1 });
-  check("gap caused by misleading -> misleading", r.tone === "misleading");
+  check("3/4 reachable (1 misleading) -> partial", r.tone === "partial");
 }
 {
   const r = verdictOf({ total: 0, resolved: 0 });

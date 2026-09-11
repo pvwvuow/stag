@@ -44,6 +44,8 @@ let restartAttempts = 0;
 let tray = null;
 let trayEnabled = false;
 let closeToTray = false;
+/** beta.4 — set while waiting for the elevated second instance to take over. */
+let pendingElevatedRelaunch = false;
 
 /* ------------------------------------------------------------------ */
 
@@ -55,12 +57,21 @@ function bootstrap() {
   // The updater is an optional feature — a failure here (missing module,
   // odd environment, …) must NEVER take the whole app down.
   try {
+    seedDifferentialCache();
     initUpdater();
   } catch (err) {
     logLine("error", `updater init failed (app continues without it): ${err?.stack || err}`);
   }
 
   app.on("second-instance", () => {
+    // beta.4 — when the user asked for an elevated relaunch, the second
+    // instance IS the elevated one: hand the session over and exit quietly.
+    if (pendingElevatedRelaunch) {
+      quitting = true;
+      killNextServer();
+      app.quit();
+      return;
+    }
     if (win) {
       if (win.isMinimized()) win.restore();
       win.show();
@@ -149,8 +160,32 @@ function logLine(level, msg) {
  * changes need elevation; this line in the support log instantly separates
  * "app not elevated" from "UAC/PowerShell broken" when the power button is
  * reported broken. Best-effort, cached, never blocks boot.
+ *
+ * beta.4 — the probe is now a shared cached promise so both the support log
+ * AND the "app:elevation" IPC (settings page badge + admin relaunch) use one
+ * honest source of truth.
  */
 let elevationLogged = false;
+let ELEVATION_PROMISE = null;
+function probeElevation() {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  if (!ELEVATION_PROMISE) {
+    ELEVATION_PROMISE = new Promise((resolve) => {
+      try {
+        const probe = spawn("net.exe", ["session"], { windowsHide: true, stdio: "ignore" });
+        const t = setTimeout(() => {
+          try { probe.kill(); } catch { /* noop */ }
+        }, 5000);
+        t.unref?.();
+        probe.once("exit", (code) => resolve(code === 0));
+        probe.once("error", () => resolve(false));
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+  return ELEVATION_PROMISE;
+}
 function logElevationState() {
   if (elevationLogged) return;
   elevationLogged = true;
@@ -158,21 +193,9 @@ function logElevationState() {
     logLine("info", `platform=${process.platform} (elevation check is Windows-only)`);
     return;
   }
-  try {
-    const probe = spawn("net.exe", ["session"], { windowsHide: true, stdio: "ignore" });
-    const t = setTimeout(() => {
-      try { probe.kill(); } catch { /* noop */ }
-    }, 5000);
-    t.unref?.();
-    probe.once("exit", (code) => {
-      logLine("info", `windows elevation: ${code === 0 ? "ADMIN (elevated)" : "standard user (not elevated)"} — system-DNS apply uses direct netsh first, UAC on demand`);
-    });
-    probe.once("error", () => {
-      logLine("info", "windows elevation: probe failed (assuming standard user)");
-    });
-  } catch (err) {
-    logLine("info", `windows elevation: probe error ${err?.message}`);
-  }
+  probeElevation().then((elevated) => {
+    logLine("info", `windows elevation: ${elevated ? "ADMIN (elevated)" : "standard user (not elevated)"} — system-DNS apply uses direct netsh first, UAC on demand`);
+  });
 }
 
 // 5.1 — a stray async error must not produce the scary red Electron dialog.
@@ -523,6 +546,38 @@ function registerIpc() {
   ipcMain.handle("app:get-version", () => app.getVersion());
   // فاز ۴.۲ — the renderer must attach this token to every /api call.
   ipcMain.handle("app:get-api-token", () => API_TOKEN);
+
+  /*
+   * beta.4 — Windows elevation state + one-click UAC relaunch. With admin
+   * rights the DNS power button applies instantly (direct netsh); without it
+   * every toggle needs a UAC prompt, so the settings page shows the badge and
+   * offers this relaunch.
+   */
+  ipcMain.handle("app:elevation", async () => {
+    const elevated = await probeElevation();
+    return { elevated, platform: process.platform };
+  });
+  ipcMain.handle("app:relaunch-elevated", async () => {
+    if (process.platform !== "win32") return { ok: false, error: "windows-only" };
+    try {
+      pendingElevatedRelaunch = true;
+      // Auto-clear the handover flag so a later unrelated second-instance
+      // (user double-launching the app) can never kill this session by mistake.
+      setTimeout(() => { pendingElevatedRelaunch = false; }, 5 * 60 * 1000).unref?.();
+      const psCmd = `Start-Process -FilePath '${String(process.execPath).replace(/'/g, "''")}' -Verb RunAs`;
+      spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      }).unref();
+      logLine("info", "elevated relaunch requested (UAC prompt shown)");
+      return { ok: true };
+    } catch (err) {
+      pendingElevatedRelaunch = false;
+      logLine("error", `elevated relaunch failed: ${err?.message}`);
+      return { ok: false, error: String(err?.message || err) };
+    }
+  });
   ipcMain.on("app:open-url", (_e, url) => {
     if (typeof url === "string" && /^https:\/\//i.test(url)) {
       shell.openExternal(url).catch(() => {});
@@ -627,6 +682,93 @@ function registerIpc() {
  *   friendly state and the renderer offers the manual releases link.
  */
 
+/*
+ * beta.4 — WHY USERS GOT FULL-SIZE UPDATES (two independent causes, both fixed):
+ *
+ * 1. electron-updater reads provider config from resources/app-update.yml.
+ *    Our packaged app SHIPPED WITHOUT IT, so in-app updates could never even
+ *    start (the renderer fell back to the manual GitHub link — a full 127MB
+ *    download every release). afterPack.cjs now writes that file; see there.
+ *
+ * 2. Differential download needs the OLD installer on disk at
+ *    <cache>/installer.exe (electron-updater 6.x hard-codes this name). It
+ *    NEVER creates that file itself: after the first full download the
+ *    installer sits in <cache>/pending/, so every future update would ALSO be
+ *    full. seedDifferentialCache() promotes it once at startup of the newly
+ *    installed version — from then on only changed blocks are downloaded.
+ */
+
+/** updaterCacheDirName from app-update.yml (fallback matches electron-builder). */
+function updaterCacheDirName() {
+  try {
+    const yml = path.join(process.resourcesPath ?? "", "app-update.yml");
+    if (fs.existsSync(yml)) {
+      const m = fs.readFileSync(yml, "utf8").match(/^updaterCacheDirName:\s*(\S+)\s*$/m);
+      if (m) return m[1];
+    }
+  } catch {
+    /* fall through */
+  }
+  return "stag-beta-updater"; // electron-builder: sanitize("STAG Beta").toLowerCase()+"-updater"
+}
+
+function differentialCacheDir() {
+  const base = process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local");
+  return path.join(base, updaterCacheDirName());
+}
+
+function seedDifferentialCache() {
+  try {
+    if (process.platform !== "win32") return;
+    if (process.env.PORTABLE_EXECUTABLE_DIR) return; // portable never self-updates
+    const cacheDir = differentialCacheDir();
+    const pendingDir = path.join(cacheDir, "pending");
+    const oldInstaller = path.join(cacheDir, "installer.exe");
+    fs.mkdirSync(cacheDir, { recursive: true });
+
+    if (!fs.existsSync(oldInstaller)) {
+      let candidate = null;
+      try {
+        const version = app.getVersion();
+        const files = fs.existsSync(pendingDir)
+          ? fs
+              .readdirSync(pendingDir)
+              .filter((f) => f.toLowerCase().endsWith(".exe"))
+              .filter((f) => !f.startsWith("temp-"))
+              .map((f) => path.join(pendingDir, f))
+          : [];
+        files.sort((a, b) => {
+          try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch { return 0; }
+        });
+        // The installer of the version we ARE RUNNING NOW is exactly the "old
+        // file" the next differential download will diff against.
+        candidate = files.find((f) => path.basename(f).includes(version)) ?? null;
+      } catch {
+        candidate = null;
+      }
+      if (candidate) {
+        fs.copyFileSync(candidate, oldInstaller);
+        logLine("info", `differential seed: ${path.basename(candidate)} -> installer.exe — the NEXT update downloads only changed blocks`);
+      } else {
+        logLine("info", "differential seed: no cached installer yet — the next update downloads fully once, then delta mode kicks in");
+      }
+    }
+
+    // electron-updater stages the NEW blockmap in pending during a download and
+    // promotes it to <cache>/current.blockmap afterwards; promote it ourselves
+    // if the app was killed in between (it is the OLD blockmap for next time).
+    try {
+      const cur = path.join(cacheDir, "current.blockmap");
+      const staged = path.join(pendingDir, "current.blockmap");
+      if (!fs.existsSync(cur) && fs.existsSync(staged)) fs.copyFileSync(staged, cur);
+    } catch {
+      /* noop */
+    }
+  } catch (err) {
+    logLine("info", `differential seed skipped: ${err?.message}`);
+  }
+}
+
 const UPDATE_STATE = {
   status: "idle", // idle | checking | available | downloading | ready | error | unsupported
   version: null,
@@ -706,10 +848,11 @@ function initUpdater() {
           : null,
       percent: 0,
       error: null,
+      delta: false,
     });
   });
   autoUpdater.on("update-not-available", () => {
-    pushUpdate({ status: "idle", version: null, percent: 0, error: null });
+    pushUpdate({ status: "idle", version: null, percent: 0, error: null, delta: false });
   });
   autoUpdater.on("download-progress", (p) => {
     pushUpdate({
@@ -721,7 +864,32 @@ function initUpdater() {
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
-    pushUpdate({ status: "ready", version: info.version ?? UPDATE_STATE.version, percent: 100 });
+    // beta.4 — tell the user the truth about HOW the update arrived: a
+    // differential pass downloads far less than the full installer size.
+    const transferred = UPDATE_STATE.transferred ?? 0;
+    const total = UPDATE_STATE.total ?? 0;
+    const delta = transferred > 0 && total > 0 && transferred < total;
+    pushUpdate({
+      status: "ready",
+      version: info.version ?? UPDATE_STATE.version,
+      percent: 100,
+      delta,
+    });
+    if (delta) {
+      logLine("info", `update downloaded DIFFERENTIALLY: ${(transferred / 1048576).toFixed(1)}MB of ${(total / 1048576).toFixed(1)}MB`);
+    }
+    // Belt & braces: the freshly downloaded installer IS the "old file" for the
+    // update after this one — pin it even if pending gets cleaned later.
+    try {
+      const downloaded = info && info.downloadedFile;
+      if (downloaded && fs.existsSync(downloaded)) {
+        const cacheDir = differentialCacheDir();
+        fs.mkdirSync(cacheDir, { recursive: true });
+        fs.copyFileSync(downloaded, path.join(cacheDir, "installer.exe"));
+      }
+    } catch {
+      /* best-effort — startup seeding covers this too */
+    }
   });
   autoUpdater.on("error", (err) => {
     const msg = String((err && err.message) || err || "");

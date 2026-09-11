@@ -9,6 +9,8 @@ export interface UpdateState {
   total: number;
   bps: number;
   error: string | null;
+  /** beta.4 — true when the installer arrived via differential (blockmap) download */
+  delta?: boolean;
 }
 
 export interface ElectronApi {
@@ -30,6 +32,9 @@ export interface ElectronApi {
   }) => Promise<{ ok: boolean; autostartActive?: boolean | null; error?: string }>;
   getLogs: () => Promise<{ ok: boolean; logs?: string; error?: string }>;
   retryServer: () => Promise<{ ok: boolean; error?: string }>;
+  /** beta.4 — Windows elevation state + one-click UAC relaunch */
+  getElevation?: () => Promise<{ elevated: boolean; platform: string }>;
+  relaunchElevated?: () => Promise<{ ok: boolean; error?: string }>;
   updater: {
     getState: () => Promise<UpdateState>;
     check: () => Promise<UpdateState>;

@@ -60,6 +60,8 @@ export interface ApiResult {
     reachable: number;
     /** critical domains that resolve but can't reach the game server */
     misleading: number;
+    /** critical domains whose answers are ALL private/unroutable (fake path) */
+    private?: number;
     skipped: number;
     avgLatency: number | null;
     routingActive: boolean;
@@ -113,6 +115,8 @@ export interface SysInterface {
 export interface SystemDnsState {
   loaded: boolean;
   supported: boolean;
+  /** beta.4 — true when STAG runs with admin rights (netsh works without UAC) */
+  elevated: boolean;
   error: string | null;
   interfaces: SysInterface[];
   primary: SysInterface | null;
@@ -155,6 +159,8 @@ export interface UpdateState {
   total: number;
   bps: number;
   error: string | null;
+  /** beta.4 — true when the installer arrived via differential (blockmap) download */
+  delta?: boolean;
 }
 
 const STATE_KEY = "stag.state.v3";
@@ -301,6 +307,8 @@ interface StagContextValue extends StagState {
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => void;
+  /** beta.4 — relaunch STAG asking for admin rights (UAC) */
+  relaunchElevated: () => Promise<void>;
 }
 
 const StagContext = createContext<StagContextValue | null>(null);
@@ -321,6 +329,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
   const [dnsSys, setDnsSys] = useState<SystemDnsState>({
     loaded: false,
     supported: true,
+    elevated: false,
     error: null,
     interfaces: [],
     primary: null,
@@ -685,6 +694,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         ok?: boolean;
         supported?: boolean;
         platform?: string;
+        elevated?: boolean;
         error?: string;
         interfaces?: SysInterface[];
         primary?: SysInterface | null;
@@ -694,6 +704,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
           ...s,
           loaded: true,
           error: d.error ?? "خطا در تشخیص وضعیت",
+          elevated: d.elevated ?? s.elevated,
           platform: d.platform ?? s.platform,
         }));
         return;
@@ -710,6 +721,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
         setDnsSys({
           loaded: true,
           supported: false,
+          elevated: false,
           error: null,
           interfaces: [],
           primary: null,
@@ -722,6 +734,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
       setDnsSys({
         loaded: true,
         supported: true,
+        elevated: d.elevated === true,
         error: null,
         interfaces: d.interfaces ?? [],
         primary,
@@ -1092,6 +1105,27 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     window.electronAPI?.updater?.install();
   }, []);
 
+  /*
+   * beta.4 — one-click UAC relaunch. If STAG is not elevated, netsh needs a
+   * UAC prompt for EVERY toggle; relaunching elevated makes switching DNS
+   * instant and silent. Exposed on the settings page.
+   */
+  const relaunchElevated = useCallback(async () => {
+    try {
+      await window.electronAPI?.relaunchElevated?.();
+      toast({
+        title: "راه‌اندازی مجدد با دسترسی مدیر",
+        description: "پنجره تأیید (UAC) را تأیید کن تا STAG با دسترسی مدیر دوباره بالا بیاید.",
+      });
+    } catch {
+      toast({
+        title: "اجرا نشد",
+        description: "راه‌اندازی مجدد با دسترسی مدیر ممکن نشد.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
   const value: StagContextValue = {
     ...state,
     view,
@@ -1124,6 +1158,7 @@ export function StagProvider({ children }: { children: React.ReactNode }) {
     update,
     checkForUpdates,
     downloadUpdate,
+    relaunchElevated,
     installUpdate,
   };
 

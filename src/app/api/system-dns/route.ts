@@ -122,9 +122,28 @@ async function runScriptDirect(scriptFile: string, timeout = 60000): Promise<voi
 
 /** True when a netsh/PowerShell error text means "needs admin rights". */
 function needsElevation(msg: string): boolean {
-  return /elevation|elevated|access is denied|access denied|administrator|RunAs|انکار شد/i.test(
+  return /elevation|elevated|access is denied|access denied|administrator|RunAs|denied|انکار شد/i.test(
     msg ?? "",
   );
+}
+
+/*
+ * beta.4 — cached elevation probe. GET reports it so the UI can offer a
+ * "run as administrator" action BEFORE the user fights a failing toggle.
+ */
+let elevatedCache: boolean | null = null;
+async function isAdmin(): Promise<boolean> {
+  if (elevatedCache !== null) return elevatedCache;
+  try {
+    const out = await ps(
+      "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+      10000,
+    );
+    elevatedCache = /true/i.test(out);
+  } catch {
+    elevatedCache = false;
+  }
+  return elevatedCache;
 }
 
 /** Ordered adapter aliases: default-route adapters first, then the rest. */
@@ -217,10 +236,12 @@ export async function GET(req: NextRequest) {
   }
   try {
     const { interfaces, primary } = await detect();
+    const elevated = await isAdmin();
     return NextResponse.json({
       ok: true,
       supported: true,
       platform: "win32",
+      elevated,
       interfaces,
       primary,
     });
@@ -229,6 +250,7 @@ export async function GET(req: NextRequest) {
       ok: false,
       supported: true,
       platform: "win32",
+      elevated: await isAdmin().catch(() => false),
       error: `تشخیص وضعیت DNS ممکن نشد: ${(err as Error).message}`,
     });
   }
@@ -330,6 +352,23 @@ export async function POST(req: NextRequest) {
     }
   };
 
+  /*
+   * beta.4 CRITICAL FIX — remove any previous result file BEFORE each stage.
+   * The old code left the direct-stage failure ("ERR ... requires elevation")
+   * on disk, then ran the UAC stage and polled `while (!result)` — the STALE
+   * content made the poll exit immediately, so even a SUCCESSFUL elevated run
+   * was reported as "دسترسی مدیر لازم است". That exact shadowing is why the
+   * power button "never worked" on a non-admin Windows machine: the change
+   * actually applied, but the UI claimed failure.
+   */
+  const clearResult = () => {
+    try {
+      fs.rmSync(resultFile, { force: true });
+    } catch {
+      /* noop */
+    }
+  };
+
   try {
     /*
      * Two-stage execution (beta.3 fix for the power button):
@@ -341,6 +380,7 @@ export async function POST(req: NextRequest) {
      */
     let directErr = "";
     let result = "";
+    clearResult();
     try {
       await runScriptDirect(scriptFile);
     } catch (err) {
@@ -353,6 +393,9 @@ export async function POST(req: NextRequest) {
 
     if (directBlocked) {
       // Stage 2 — one UAC prompt, hidden window, wait for the script to finish.
+      // beta.4: wipe the stale direct-stage result first (see clearResult).
+      clearResult();
+      result = "";
       const elevate =
         `Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden ` +
         `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${scriptFile}'`;
