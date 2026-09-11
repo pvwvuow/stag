@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sun, Moon, Minus, Square, Copy, X } from "lucide-react";
 import { useStag } from "@/components/stag-store";
+import { StagLockup } from "@/components/brand";
 
 const THEME_KEY = "stag.theme";
 export type Theme = "dark" | "light";
@@ -18,6 +19,39 @@ export function applyTheme(theme: Theme) {
   }
 }
 
+/**
+ * beta.6 — the theme toggle lives in ONE place (the sidebar footer, next to
+ * the language switch). The titlebar is pure window chrome again — night/day
+ * never belonged next to minimize/close.
+ */
+export function useTheme() {
+  const [theme, setTheme] = useState<Theme>("light");
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(THEME_KEY);
+    } catch {
+      /* noop */
+    }
+    const initial: Theme = saved === "dark" ? "dark" : "light";
+    applyTheme(initial);
+    setTheme(initial);
+  }, []);
+  const toggle = () => {
+    setTheme((cur) => {
+      const next: Theme = cur === "dark" ? "light" : "dark";
+      applyTheme(next);
+      return next;
+    });
+  };
+  return { theme, toggle };
+}
+
+/**
+ * Windows-convention caption button: square, full caption height, flush
+ * against the window corner edge (46px wide like native apps), subtle hover,
+ * close turns red. No rounded corners, no gaps.
+ */
 function WinButton({
   onClick,
   label,
@@ -34,8 +68,10 @@ function WinButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`app-no-drag flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${
-        danger ? "hover:bg-rose-500 hover:text-white" : "hover:bg-muted hover:text-foreground"
+      className={`app-no-drag flex h-full w-[46px] shrink-0 items-center justify-center text-muted-foreground transition-colors ${
+        danger
+          ? "hover:bg-rose-500 hover:text-white"
+          : "hover:bg-foreground/10 hover:text-foreground"
       }`}
     >
       {children}
@@ -44,72 +80,57 @@ function WinButton({
 }
 
 /**
- * Slim strip on top of the main area: theme toggle + frameless-window
- * controls (right side, like the reference mock). Full strip is a drag region.
+ * beta.6 — ONE full-width header over the whole window (the sidebar and main
+ * area are a single surface now). Brand on the start edge, caption buttons
+ * pinned flush to the top-right corner (Windows convention in both UI
+ * languages — that is where users look for them). The entire strip drags the
+ * frameless window.
  */
 export function WindowStrip() {
   const st = useStag();
   const [isDesktop, setIsDesktop] = useState(false);
   const [maximized, setMaximized] = useState(false);
-  const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
     setIsDesktop(!!window.electronAPI?.isDesktop);
-    let saved: string | null = null;
-    try {
-      saved = localStorage.getItem(THEME_KEY);
-    } catch {
-      /* noop */
-    }
-    const initial: Theme = saved === "dark" ? "dark" : "light";
-    applyTheme(initial);
-    setTheme(initial);
-
     if (window.electronAPI) {
       window.electronAPI.isMaximized().then(setMaximized).catch(() => {});
       return window.electronAPI.onMaximizedChange(setMaximized);
     }
   }, []);
 
-  const toggleTheme = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    applyTheme(next);
-  };
-
   return (
-    <header className="app-drag flex h-10 w-full shrink-0 select-none items-center justify-between gap-2 pe-3 ps-4">
-      {/* controls sit at the visual right edge (start side in RTL) */}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={toggleTheme}
-          aria-label={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
-          title={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
-          className="app-no-drag flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
-        >
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
-
+    <header
+      dir="ltr"
+      className="app-drag flex h-12 w-full shrink-0 select-none items-stretch justify-between"
+    >
+      {/* brand on the start edge */}
+      <div className="flex items-center ps-4">
+        <StagLockup compact />
+      </div>
+      {/* caption buttons pinned to the physical top-right corner */}
+      <div className="flex items-stretch">
         {isDesktop && window.electronAPI && (
           <>
-            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <WinButton onClick={() => window.electronAPI!.minimize()} label={st.t("title.min")}>
-              <Minus className="h-4 w-4" />
+              <Minus className="h-4 w-4" strokeWidth={1.8} />
             </WinButton>
             <WinButton
               onClick={() => window.electronAPI!.maximizeToggle()}
               label={maximized ? st.t("title.restore") : st.t("title.max")}
             >
-              {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+              {maximized ? (
+                <Copy className="h-[15px] w-[15px]" strokeWidth={1.8} />
+              ) : (
+                <Square className="h-[15px] w-[15px]" strokeWidth={1.8} />
+              )}
             </WinButton>
             <WinButton onClick={() => window.electronAPI!.close()} label={st.t("title.close")} danger>
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" strokeWidth={1.8} />
             </WinButton>
           </>
         )}
       </div>
-      {/* drag filler towards the left */}
-      <span className="flex-1" aria-hidden />
     </header>
   );
 }

@@ -333,17 +333,10 @@
   background-image: linear-gradient(155deg, oklch(0.78 0.12 200), oklch(0.55 0.12 224));
 }
 
-/* Subtle grid glow background — turquoise-tinted, theme aware */
+/* beta.6 — plain, calm background: soft top glow only (the checker grid is gone) */
 .app-bg {
   background-color: var(--app-bg);
-  background-image:
-    radial-gradient(ellipse 80% 50% at 50% -10%, var(--app-glow), transparent),
-    linear-gradient(var(--app-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--app-grid) 1px, transparent 1px);
-  background-size:
-    100% 100%,
-    44px 44px,
-    44px 44px;
+  background-image: radial-gradient(ellipse 80% 50% at 50% -10%, var(--app-glow), transparent);
 }
 
 /* Frameless-window titlebar drag regions (no-op in the browser) */
@@ -354,20 +347,26 @@
   -webkit-app-region: no-drag;
 }
 
-/* Custom scrollbar — theme aware */
+/* Custom scrollbar — theme aware. beta.6: transparent track (the old solid
+   track painted a wall between the sidebar and the content in RTL); the thumb
+   floats as a slim pill instead. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--app-scroll-track);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--app-scroll-thumb);
   border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scroll-thumb-hover);
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
 
 /* Accessibility (فاز ۶.۵) — a consistent, high-visibility keyboard focus ring

@@ -11,10 +11,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Languages,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { useStag, type ViewId } from "@/components/stag-store";
-import { StagLockup, StagMark } from "@/components/brand";
-import { WindowStrip } from "@/components/titlebar";
+import { StagMark } from "@/components/brand";
+import { WindowStrip, useTheme } from "@/components/titlebar";
 import { Dashboard } from "@/components/views/dashboard";
 import { Optimize } from "@/components/views/optimize";
 import { Servers } from "@/components/views/servers";
@@ -35,13 +37,15 @@ const NAV: Array<{ id: ViewId; labelKey: string; icon: React.ReactNode }> = [
 const SIDEBAR_KEY = "stag.sidebar.collapsed.v1";
 
 /**
- * beta.5 — the sidebar is ONE piece with the main area (same background,
- * hairline divider) and collapses to an icon rail. Collapsed icons stay
- * clickable and carry tooltips; the width animates so it feels native.
+ * beta.6 — the sidebar is no longer a panel at all: transparent, no divider,
+ * no private header — it shares ONE surface with the main area (the brand sits
+ * in the global window header). Collapsed state stays an icon rail with
+ * clickable, tooltipped icons.
  */
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const st = useStag();
   const [version, setVersion] = useState(APP_VERSION);
+  const { theme, toggle: toggleTheme } = useTheme();
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {});
@@ -52,23 +56,12 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 
   return (
     <nav
-      className={`relative flex h-full shrink-0 flex-col bg-sidebar/80 backdrop-blur transition-[width] duration-200 ease-out ${
+      className={`relative flex h-full shrink-0 flex-col transition-[width] duration-200 ease-out ${
         collapsed ? "w-[64px]" : "w-[232px]"
       }`}
     >
-      {/* soft separator to the main area */}
-      <span className="hairline-v absolute end-0 top-0 h-full" aria-hidden />
-      {/* brand — drag region */}
-      <div className="app-drag flex h-[72px] select-none items-center px-5">
-        {collapsed ? (
-          <StagMark className="mx-auto h-8 w-8 shrink-0" />
-        ) : (
-          <StagLockup />
-        )}
-      </div>
-
-      {/* nav */}
-      <div className={`mt-2 space-y-1.5 ${collapsed ? "px-2.5" : "px-3.5"}`}>
+      {/* nav — flush under the global header */}
+      <div className={`mt-1 space-y-1.5 ${collapsed ? "px-2.5" : "px-3.5"}`}>
         {NAV.map((item) => {
           const active = st.view === item.id;
           const label = st.t(item.labelKey);
@@ -126,22 +119,52 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           </button>
         )}
 
-        {/* beta.5 — quick language switch (fa/en) */}
-        <button
-          onClick={() => st.setLang(st.lang === "fa" ? "en" : "fa")}
-          title={st.t("shell.langTitle")}
-          aria-label={st.t("shell.langTitle")}
-          className={`flex w-full items-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground ${
-            collapsed ? "justify-center py-2.5" : "gap-2 px-3.5 py-2.5"
-          }`}
-        >
-          <Languages className="h-4 w-4 shrink-0" />
-          {!collapsed && (
-            <span className="min-w-0 flex-1 text-[11px] font-bold" dir="ltr">
-              {st.lang === "fa" ? "English" : "فارسی"}
-            </span>
-          )}
-        </button>
+        {/* beta.6 — quick switches: language + theme side by side (icon-only
+            when collapsed); the theme toggle finally has a proper home. */}
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-1">
+            <button
+              onClick={() => st.setLang(st.lang === "fa" ? "en" : "fa")}
+              title={st.t("shell.langTitle")}
+              aria-label={st.t("shell.langTitle")}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              <Languages className="h-4 w-4 shrink-0" />
+            </button>
+            <button
+              onClick={toggleTheme}
+              title={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+              aria-label={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => st.setLang(st.lang === "fa" ? "en" : "fa")}
+              title={st.t("shell.langTitle")}
+              className="flex items-center justify-center gap-2 rounded-full px-2 py-2.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              <Languages className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 truncate text-[11px] font-bold" dir="ltr">
+                {st.lang === "fa" ? "English" : "فارسی"}
+              </span>
+            </button>
+            <button
+              onClick={toggleTheme}
+              title={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+              aria-label={theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+              className="flex items-center justify-center gap-2 rounded-full px-2 py-2.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              <span className="text-[11px] font-bold" dir="rtl">
+                {theme === "dark" ? st.t("title.toLight") : st.t("title.toDark")}
+              </span>
+            </button>
+          </div>
+        )}
 
         {!collapsed && (
           <div className="flex items-start gap-2.5" dir="rtl">
@@ -219,21 +242,25 @@ export function AppShell() {
   }, [st.lang, st.dir]);
 
   return (
-    <div dir="ltr" className="app-bg flex h-screen overflow-hidden">
-      <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
-      {/* main column (direction follows the UI language) */}
-      <div dir={st.dir} className="flex min-w-0 flex-1 flex-col">
-        <WindowStrip />
-        <main className="min-h-0 flex-1">
-          {/* ۵.۳ — a crashed view must never white-screen the whole app */}
-          <ErrorBoundary>
-            {st.view === "dashboard" && <Dashboard />}
-            {st.view === "optimize" && <Optimize />}
-            {st.view === "servers" && <Servers />}
-            {st.view === "settings" && <SettingsView />}
-            {st.view === "about" && <About />}
-          </ErrorBoundary>
-        </main>
+    <div dir="ltr" className="app-bg flex h-screen flex-col overflow-hidden">
+      {/* beta.6 — one full-width header: brand + caption buttons (top-right) */}
+      <WindowStrip />
+      {/* one continuous surface: sidebar flows into the main area */}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
+        {/* main column (direction follows the UI language) */}
+        <div dir={st.dir} className="flex min-w-0 flex-1 flex-col">
+          <main className="min-h-0 flex-1">
+            {/* ۵.۳ — a crashed view must never white-screen the whole app */}
+            <ErrorBoundary>
+              {st.view === "dashboard" && <Dashboard />}
+              {st.view === "optimize" && <Optimize />}
+              {st.view === "servers" && <Servers />}
+              {st.view === "settings" && <SettingsView />}
+              {st.view === "about" && <About />}
+            </ErrorBoundary>
+          </main>
+        </div>
       </div>
     </div>
   );

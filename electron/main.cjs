@@ -711,19 +711,20 @@ function registerIpc() {
  */
 
 /*
- * beta.4 — WHY USERS GOT FULL-SIZE UPDATES (two independent causes, both fixed):
- *
- * 1. electron-updater reads provider config from resources/app-update.yml.
- *    Our packaged app SHIPPED WITHOUT IT, so in-app updates could never even
- *    start (the renderer fell back to the manual GitHub link — a full 127MB
- *    download every release). afterPack.cjs now writes that file; see there.
- *
- * 2. Differential download needs the OLD installer on disk at
- *    <cache>/installer.exe (electron-updater 6.x hard-codes this name). It
- *    NEVER creates that file itself: after the first full download the
- *    installer sits in <cache>/pending/, so every future update would ALSO be
- *    full. seedDifferentialCache() promotes it once at startup of the newly
- *    installed version — from then on only changed blocks are downloaded.
+ * beta.6 — WHY beta.4->beta.5 WAS STILL A FULL DOWNLOAD (root cause, fixed):
+ * Differential download needs the OLD installer on disk at
+ * <cache>/installer.exe (electron-updater 6.x hard-codes this name). It NEVER
+ * creates that file itself. beta.4 was installed MANUALLY (beta.3 shipped
+ * without app-update.yml, so the in-app updater could not have downloaded it),
+ * therefore pending/ was empty at beta.4 boot -> nothing was seeded -> the
+ * beta.5 delta attempt failed with ENOENT and fell back to a full download.
+ * The just-downloaded beta.5 installer WAS pinned afterwards, so the chain is
+ * armed from now on. This version additionally:
+ *   - version-stamps every cached file (a stale pair can only cause a wasted
+ *     delta attempt: the final sha512 check would reject it anyway);
+ *   - falls back to the Setup exe the user just downloaded MANUALLY (it sits
+ *     in Downloads/Desktop) so manual installs arm the chain too;
+ *   - only promotes a staged blockmap that provably belongs to THIS version.
  */
 
 /** updaterCacheDirName from app-update.yml (fallback matches electron-builder). */
@@ -745,19 +746,110 @@ function differentialCacheDir() {
   return path.join(base, updaterCacheDirName());
 }
 
+function diffStampPath(file) {
+  return `${file}.stagver`;
+}
+
+function readDiffStamp(file) {
+  try {
+    return fs.readFileSync(diffStampPath(file), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+function writeDiffStamp(file, version) {
+  try {
+    fs.writeFileSync(diffStampPath(file), version, "utf8");
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Remove a cached differential file that does not belong to `version`. */
+function dropStaleDiffFile(file, version) {
+  try {
+    if (fs.existsSync(file) && readDiffStamp(file) !== version) {
+      fs.rmSync(file, { force: true });
+      fs.rmSync(diffStampPath(file), { force: true });
+      return true;
+    }
+  } catch {
+    /* noop */
+  }
+  return false;
+}
+
+/** Newest matching installer exe for `version` in user-visible folders. */
+function findSetupInstallerOnDisk(version) {
+  const dirs = new Set();
+  try {
+    dirs.add(app.getPath("downloads"));
+  } catch {
+    /* noop */
+  }
+  try {
+    dirs.add(path.join(app.getPath("home"), "Downloads"));
+  } catch {
+    /* noop */
+  }
+  try {
+    dirs.add(path.join(app.getPath("home"), "Desktop"));
+  } catch {
+    /* noop */
+  }
+  const exact = `STAG-Beta-Setup-${version}.exe`;
+  for (const dir of dirs) {
+    let entries = [];
+    try {
+      entries = fs
+        .readdirSync(dir)
+        .filter((f) => f.toLowerCase().endsWith(".exe") && !f.startsWith("temp-"))
+        .sort((a, b) => {
+          try {
+            return fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs;
+          } catch {
+            return 0;
+          }
+        });
+    } catch {
+      continue; // dir unreadable / does not exist
+    }
+    for (const f of entries) {
+      // exact artifact name wins; a version+Setup match also counts (never the
+      // Portable build — its bytes differ and the delta would be rejected).
+      const isMatch = f === exact || (f.includes(version) && /setup/i.test(f));
+      if (!isMatch) continue;
+      const full = path.join(dir, f);
+      try {
+        if (fs.statSync(full).size >= 50 * 1024 * 1024) return full;
+      } catch {
+        /* file vanished */
+      }
+    }
+  }
+  return null;
+}
+
 function seedDifferentialCache() {
   try {
     if (process.platform !== "win32") return;
     if (process.env.PORTABLE_EXECUTABLE_DIR) return; // portable never self-updates
+    const version = app.getVersion();
     const cacheDir = differentialCacheDir();
     const pendingDir = path.join(cacheDir, "pending");
     const oldInstaller = path.join(cacheDir, "installer.exe");
     fs.mkdirSync(cacheDir, { recursive: true });
 
+    if (dropStaleDiffFile(oldInstaller, version)) {
+      logLine("info", "differential seed: stale installer.exe dropped (version stamp mismatch)");
+    }
+
     if (!fs.existsSync(oldInstaller)) {
+      // 1) The updater itself leaves the just-downloaded installer in pending/.
       let candidate = null;
+      let source = null;
       try {
-        const version = app.getVersion();
         const files = fs.existsSync(pendingDir)
           ? fs
               .readdirSync(pendingDir)
@@ -766,29 +858,62 @@ function seedDifferentialCache() {
               .map((f) => path.join(pendingDir, f))
           : [];
         files.sort((a, b) => {
-          try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch { return 0; }
+          try {
+            return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+          } catch {
+            return 0;
+          }
         });
-        // The installer of the version we ARE RUNNING NOW is exactly the "old
-        // file" the next differential download will diff against.
         candidate = files.find((f) => path.basename(f).includes(version)) ?? null;
+        if (candidate) source = "pending";
       } catch {
         candidate = null;
       }
+
+      // 2) Manual installs: the Setup exe the user just ran usually still sits
+      //    in Downloads/Desktop. (A wrong pick is SAFE: electron-updater
+      //    validates the final sha512 of every differential download and
+      //    falls back to full automatically.)
+      if (!candidate) {
+        candidate = findSetupInstallerOnDisk(version);
+        if (candidate) source = "downloads";
+      }
+
       if (candidate) {
         fs.copyFileSync(candidate, oldInstaller);
-        logLine("info", `differential seed: ${path.basename(candidate)} -> installer.exe — the NEXT update downloads only changed blocks`);
+        writeDiffStamp(oldInstaller, version);
+        logLine(
+          "info",
+          `differential seed: ${path.basename(candidate)} (${source}) -> installer.exe — the NEXT update downloads only changed blocks`,
+        );
       } else {
         logLine("info", "differential seed: no cached installer yet — the next update downloads fully once, then delta mode kicks in");
       }
     }
 
-    // electron-updater stages the NEW blockmap in pending during a download and
-    // promotes it to <cache>/current.blockmap afterwards; promote it ourselves
-    // if the app was killed in between (it is the OLD blockmap for next time).
+    // Promote the blockmap staged in pending/ (electron-updater writes the NEW
+    // blockmap there during a download) once it provably belongs to THIS
+    // version; it is the OLD blockmap for the next check. Otherwise
+    // electron-updater re-downloads the old blockmap from GitHub (harmless).
     try {
       const cur = path.join(cacheDir, "current.blockmap");
       const staged = path.join(pendingDir, "current.blockmap");
-      if (!fs.existsSync(cur) && fs.existsSync(staged)) fs.copyFileSync(staged, cur);
+      if (dropStaleDiffFile(cur, version)) {
+        logLine("info", "differential seed: stale current.blockmap dropped");
+      }
+      if (!fs.existsSync(cur) && fs.existsSync(staged)) {
+        let belongs = false;
+        try {
+          const info = JSON.parse(fs.readFileSync(path.join(pendingDir, "update-info.json"), "utf8"));
+          belongs = String(info?.fileName || "").includes(version);
+        } catch {
+          belongs = false;
+        }
+        if (belongs) {
+          fs.copyFileSync(staged, cur);
+          writeDiffStamp(cur, version);
+        }
+      }
     } catch {
       /* noop */
     }
@@ -907,13 +1032,29 @@ function initUpdater() {
       logLine("info", `update downloaded DIFFERENTIALLY: ${(transferred / 1048576).toFixed(1)}MB of ${(total / 1048576).toFixed(1)}MB`);
     }
     // Belt & braces: the freshly downloaded installer IS the "old file" for the
-    // update after this one — pin it even if pending gets cleaned later.
+    // update after this one — pin it (version-stamped!) even if pending gets
+    // cleaned later. The stamp makes the NEW version's boot seed keep it.
     try {
       const downloaded = info && info.downloadedFile;
+      const newVersion = (info && info.version) || UPDATE_STATE.version;
       if (downloaded && fs.existsSync(downloaded)) {
         const cacheDir = differentialCacheDir();
+        const pinned = path.join(cacheDir, "installer.exe");
         fs.mkdirSync(cacheDir, { recursive: true });
-        fs.copyFileSync(downloaded, path.join(cacheDir, "installer.exe"));
+        fs.copyFileSync(downloaded, pinned);
+        if (newVersion) writeDiffStamp(pinned, newVersion);
+      }
+      // The staged blockmap belongs to the same new version — promote it now.
+      try {
+        const cacheDir = differentialCacheDir();
+        const staged = path.join(cacheDir, "pending", "current.blockmap");
+        const cur = path.join(cacheDir, "current.blockmap");
+        if (newVersion && fs.existsSync(staged)) {
+          fs.copyFileSync(staged, cur);
+          writeDiffStamp(cur, newVersion);
+        }
+      } catch {
+        /* noop */
       }
     } catch {
       /* best-effort — startup seeding covers this too */
